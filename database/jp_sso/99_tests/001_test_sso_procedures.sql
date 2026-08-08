@@ -64,7 +64,10 @@ IF OBJECT_ID('tempdb..#Revoke') IS NOT NULL DROP TABLE #Revoke;
 CREATE TABLE #Revoke (Status int, Code varchar(50), Message nvarchar(400), Id bigint, RevokedCount int);
 
 IF OBJECT_ID('tempdb..#ResetTok') IS NOT NULL DROP TABLE #ResetTok;
-CREATE TABLE #ResetTok (Status int, Code varchar(50), Message nvarchar(400), Id bigint, UserId bigint);
+-- UserTypeId is the sixth column: the reset link has to target the right app
+-- (admin :4200 / school :4300 / teacher :4400), so the proc returns which one.
+-- INSERT ... EXEC needs this shape to match the proc exactly.
+CREATE TABLE #ResetTok (Status int, Code varchar(50), Message nvarchar(400), Id bigint, UserId bigint, UserTypeId int);
 
 IF OBJECT_ID('tempdb..#ChangePwd') IS NOT NULL DROP TABLE #ChangePwd;
 CREATE TABLE #ChangePwd (Status int, Code varchar(50), Message nvarchar(400), Id bigint, RevokedTokenCount int);
