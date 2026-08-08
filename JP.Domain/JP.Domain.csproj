@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    JP.Domain — DTOs, request/response models, paging contracts.
+    Plain data shapes only: no behaviour, no I/O.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>JP.Domain</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\JP.Core\JP.Core.csproj" />
+  </ItemGroup>
+
+</Project>

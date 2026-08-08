@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    JP.Sso.Api — identity surface only.
+    auth · users · roles · permissions
+
+    Deployable entirely on its own; it never talks to jp_mdm or jp_app.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>JP.Sso.Api</RootNamespace>
+    <UserSecretsId>jp-sso-api-8f2c1d40-6b7e-4a19-9c33-5e8a41d7b206</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Sinks.File" />
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\JP.Core\JP.Core.csproj" />
+    <ProjectReference Include="..\JP.Domain\JP.Domain.csproj" />
+    <ProjectReference Include="..\JP.Infrastructure\JP.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

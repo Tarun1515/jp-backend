@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    JP.Infrastructure — everything that touches the outside world.
+    Dapper/SQL, password hashing, JWT, file storage, SMTP, middleware, filters.
+
+    This is the ONLY project that references Microsoft.Data.SqlClient. An API
+    project therefore cannot open a database connection on its own, which is
+    what keeps the Controller -> Service -> Repository -> SP layering honest.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>JP.Infrastructure</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Gives access to IMiddleware, ActionFilterAttribute, IHttpContextAccessor
+         and the Microsoft.Extensions.* abstractions straight from the shared
+         framework, so no separate Microsoft.Extensions package versions can
+         drift out of sync with the ASP.NET Core runtime. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" />
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
+    <!-- Lives here, not in the API projects: both APIs must validate tokens
+         with identical settings, so the setup is written once. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="MailKit" />
+    <!-- For FluentValidationFilter. The validators themselves live in the API
+         projects; only the filter that runs them is shared. -->
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\JP.Core\JP.Core.csproj" />
+    <ProjectReference Include="..\JP.Domain\JP.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Email templates are copied next to the binary so IEmailService can
+         load them at runtime. -->
+    <None Update="Email\Templates\**\*.html" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

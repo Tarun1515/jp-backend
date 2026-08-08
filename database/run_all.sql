@@ -1,0 +1,200 @@
+/*==============================================================================
+  run_all.sql
+  Teacher Recruitment Portal — full database build orchestrator.
+
+  Builds all three databases in dependency order:
+      jp_sso  (identity)  ->  jp_mdm  (masters + approval)  ->  jp_app (business)
+
+  Each database is built in the fixed order:
+      00_create_database  ->  01_tables  ->  02_indexes  ->  03_seed  ->  04_procedures
+
+  ----------------------------------------------------------------------------
+  SQLCMD MODE IS REQUIRED. This script uses :setvar, :r and :on error.
+  ----------------------------------------------------------------------------
+
+  Run from the REPOSITORY ROOT (paths below are relative to it):
+
+      sqlcmd -S localhost\TARUN -E -b -f 65001 -i database\run_all.sql
+
+  Or with SQL authentication:
+
+      sqlcmd -S localhost\TARUN -U jp_user -P $env:SQL_PASSWORD -b -f 65001 -i database\run_all.sql
+
+  Flags that matter:
+      -b          stop on error. Without it sqlcmd reports a failure and then
+                  cheerfully carries on running the remaining scripts.
+      -f 65001    read the input as UTF-8. These files contain non-ASCII
+                  characters; without this sqlcmd decodes them as ANSI and
+                  mangles anything outside 7-bit ASCII.
+
+  To run from somewhere else, override DbRoot on the command line
+  (a -v value takes precedence over the :setvar default below):
+
+      sqlcmd -S localhost\TARUN -E -v DbRoot="D:\Projects\TeacherRecruitmentPortal\database" -i run_all.sql
+
+  In SSMS / Azure Data Studio: Query -> "SQLCMD Mode" must be enabled first,
+  otherwise every ':' line is reported as a syntax error.
+
+  ----------------------------------------------------------------------------
+  IDEMPOTENT. Every referenced script guards its own object, so re-running this
+  file is safe and is the normal way to apply new scripts to an existing dev DB.
+  ----------------------------------------------------------------------------
+
+  PHASE 0 NOTE
+  Only the database-creation scripts exist so far. The :r include lines for
+  tables / indexes / seed / procedures are stubbed out below and get uncommented
+  as Phase 1 onward lands. Keep every new script listed here, in order — this
+  file is the authoritative build order.
+==============================================================================*/
+
+:on error exit
+
+:setvar DbRoot "database"
+
+SET NOCOUNT ON;
+GO
+
+/*
+  Filtered indexes REQUIRE QUOTED_IDENTIFIER ON, both to CREATE them and for
+  any later INSERT/UPDATE on the table. sqlcmd defaults it to OFF while SSMS
+  defaults it ON, which is why a script can work in SSMS and fail from the
+  command line with Msg 1934.
+
+  Set here for the whole session, and repeated at the top of every individual
+  script so they also work when run standalone.
+*/
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
+PRINT '';
+PRINT '===============================================================================';
+PRINT ' TEACHER RECRUITMENT PORTAL — DATABASE BUILD';
+PRINT ' Server   : ' + @@SERVERNAME;
+PRINT ' Started  : ' + CONVERT(varchar(30), SYSUTCDATETIME(), 126) + ' (UTC)';
+PRINT '===============================================================================';
+GO
+
+
+/*==============================================================================
+  DB 1 — jp_sso  (identity: users, credentials, tokens, roles, permissions)
+==============================================================================*/
+PRINT '';
+PRINT '--- jp_sso -------------------------------------------------------------------';
+GO
+
+:r $(DbRoot)\jp_sso\00_create_database.sql
+
+-- ---- tables: 7 masters, then 10 transactional in dependency order ----------
+PRINT '  Tables ...';
+GO
+:r $(DbRoot)\jp_sso\01_tables\001_m_sso_user_types.sql
+:r $(DbRoot)\jp_sso\01_tables\002_m_sso_user_status.sql
+:r $(DbRoot)\jp_sso\01_tables\003_m_sso_hash_algorithms.sql
+:r $(DbRoot)\jp_sso\01_tables\004_m_sso_token_types.sql
+:r $(DbRoot)\jp_sso\01_tables\005_m_sso_otp_channels.sql
+:r $(DbRoot)\jp_sso\01_tables\006_m_sso_lock_reasons.sql
+:r $(DbRoot)\jp_sso\01_tables\007_m_sso_modules.sql
+:r $(DbRoot)\jp_sso\01_tables\008_t_sso_users.sql
+:r $(DbRoot)\jp_sso\01_tables\009_t_sso_user_credentials.sql
+:r $(DbRoot)\jp_sso\01_tables\010_t_sso_user_tokens.sql
+:r $(DbRoot)\jp_sso\01_tables\011_t_sso_user_otps.sql
+:r $(DbRoot)\jp_sso\01_tables\012_t_sso_user_login_attempts.sql
+:r $(DbRoot)\jp_sso\01_tables\013_t_sso_user_lockouts.sql
+:r $(DbRoot)\jp_sso\01_tables\014_t_sso_roles.sql
+:r $(DbRoot)\jp_sso\01_tables\015_t_sso_permissions.sql
+:r $(DbRoot)\jp_sso\01_tables\016_t_sso_role_permissions.sql
+:r $(DbRoot)\jp_sso\01_tables\017_t_sso_user_roles.sql
+-- Column additions to already-deployed tables go in numbered ALTER scripts
+-- (see Block D of _TEMPLATE_table.sql), never by editing the CREATE above.
+:r $(DbRoot)\jp_sso\01_tables\018_alter_t_sso_user_lockouts_previous_status.sql
+:r $(DbRoot)\jp_sso\01_tables\019_alter_t_sso_user_lockouts_unlockedby_check.sql
+:r $(DbRoot)\jp_sso\01_tables\020_t_sso_error_log.sql
+-- Navigation. Menus live in jp_sso because a menu row is gated by a permission
+-- and permissions are here; any other home means a cross-database join on
+-- every sign-in, which decision 2.2 forbids.
+:r $(DbRoot)\jp_sso\01_tables\021_m_sso_menus.sql
+:r $(DbRoot)\jp_sso\01_tables\022_t_sso_role_menus.sql
+
+-- ---- indexes ---------------------------------------------------------------
+PRINT '  Indexes ...';
+GO
+:r $(DbRoot)\jp_sso\02_indexes\001_ix_t_sso_users.sql
+:r $(DbRoot)\jp_sso\02_indexes\002_ix_t_sso_user_credentials.sql
+:r $(DbRoot)\jp_sso\02_indexes\003_ix_t_sso_user_tokens.sql
+:r $(DbRoot)\jp_sso\02_indexes\004_ix_t_sso_user_otps.sql
+:r $(DbRoot)\jp_sso\02_indexes\005_ix_t_sso_user_login_attempts.sql
+:r $(DbRoot)\jp_sso\02_indexes\006_ix_t_sso_user_lockouts.sql
+:r $(DbRoot)\jp_sso\02_indexes\007_ix_t_sso_roles.sql
+:r $(DbRoot)\jp_sso\02_indexes\008_ix_t_sso_permissions.sql
+:r $(DbRoot)\jp_sso\02_indexes\009_ix_t_sso_role_permissions.sql
+:r $(DbRoot)\jp_sso\02_indexes\010_ix_t_sso_user_roles.sql
+
+-- ---- seed ------------------------------------------------------------------
+PRINT '  Seed ...';
+GO
+:r $(DbRoot)\jp_sso\03_seed\001_seed_masters.sql
+:r $(DbRoot)\jp_sso\03_seed\002_seed_roles.sql
+:r $(DbRoot)\jp_sso\03_seed\003_seed_permissions.sql
+:r $(DbRoot)\jp_sso\03_seed\004_seed_role_permissions.sql
+-- Menus AFTER permissions: the seed resolves PermissionCode -> PermissionId
+-- and aborts on an unknown code, because a typo there would silently make an
+-- item visible to everyone rather than to nobody.
+:r $(DbRoot)\jp_sso\03_seed\005_seed_menus.sql
+
+-- ---- programmability -------------------------------------------------------
+-- Functions first: the Phase 1B procedures depend on them.
+PRINT '  Functions and procedures ...';
+GO
+:r $(DbRoot)\jp_sso\04_procedures\000_fn_datetime_ist.sql
+-- USP_LogError first: every procedure below calls it from its CATCH block.
+:r $(DbRoot)\jp_sso\04_procedures\000_USP_LogError.sql
+:r $(DbRoot)\jp_sso\04_procedures\001_registration.sql
+:r $(DbRoot)\jp_sso\04_procedures\002_login.sql
+:r $(DbRoot)\jp_sso\04_procedures\003_tokens.sql
+:r $(DbRoot)\jp_sso\04_procedures\004_password.sql
+:r $(DbRoot)\jp_sso\04_procedures\005_otp.sql
+:r $(DbRoot)\jp_sso\04_procedures\006_admin.sql
+:r $(DbRoot)\jp_sso\04_procedures\007_lists.sql
+:r $(DbRoot)\jp_sso\04_procedures\008_menus.sql
+
+
+/*==============================================================================
+  DB 2 — jp_mdm  (master data + approval engine + registration payload)
+==============================================================================*/
+PRINT '';
+PRINT '--- jp_mdm -------------------------------------------------------------------';
+GO
+
+:r $(DbRoot)\jp_mdm\00_create_database.sql
+
+-- PHASE 2 — tables (31: 23 masters + 8 transactional)
+-- PHASE 2 — indexes
+-- PHASE 2 — seed (geography, education, profile, approval + payment masters)
+-- PHASE 2 — stored procedures
+
+
+/*==============================================================================
+  DB 3 — jp_app  (business: schools, teachers, jobs, applications, CMS)
+==============================================================================*/
+PRINT '';
+PRINT '--- jp_app -------------------------------------------------------------------';
+GO
+
+:r $(DbRoot)\jp_app\00_create_database.sql
+
+-- PHASE 3 — tables (39: 7 masters + 32 transactional)
+-- PHASE 3 — indexes
+-- PHASE 3 — seed
+-- PHASE 3 — stored procedures
+
+
+/*==============================================================================
+  DONE
+==============================================================================*/
+PRINT '';
+PRINT '===============================================================================';
+PRINT ' BUILD COMPLETE — ' + CONVERT(varchar(30), SYSUTCDATETIME(), 126) + ' (UTC)';
+PRINT '===============================================================================';
+PRINT '';
+GO

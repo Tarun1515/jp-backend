@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    JP.Tools.SeedAdmin — creates the first administrator account.
+
+    There is no public signup for an admin, and there is deliberately no
+    checked-in SQL script that creates one either: a password hash committed to
+    a .sql file is a password that every developer, every clone and every backup
+    of the repository shares forever. This tool derives the hash on the
+    operator's machine, at run time, from a password only they have seen.
+
+    It is an OPERATOR tool, not part of any deployment. Nothing references it.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>JP.Tools.SeedAdmin</RootNamespace>
+    <AssemblyName>jp-seed-admin</AssemblyName>
+    <!-- Console output is the product here; no XML docs to generate. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\JP.Core\JP.Core.csproj" />
+    <ProjectReference Include="..\JP.Infrastructure\JP.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

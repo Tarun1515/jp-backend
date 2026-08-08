@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    JP.Core — the innermost layer.
+
+    Response envelope, error codes, claim names, enums mirroring the SSO
+    masters, exceptions, extensions.
+
+    Deliberately references NOTHING: no other project, no NuGet package.
+    If something here needs a dependency, it belongs in a different project.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>JP.Core</RootNamespace>
+  </PropertyGroup>
+
+</Project>

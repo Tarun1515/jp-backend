@@ -1,0 +1,53 @@
+<Project>
+
+  <!--
+    Central Package Management.
+    Every NuGet version for the whole solution is declared here. Individual
+    .csproj files reference packages WITHOUT a Version attribute, so two
+    projects can never drift onto different versions of the same package.
+
+    To bump a package: change it here, once.
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup Label="Data access">
+    <!-- Dapper only. Entity Framework is explicitly not used on this project. -->
+    <PackageVersion Include="Dapper" Version="2.1.66" />
+    <PackageVersion Include="Microsoft.Data.SqlClient" Version="5.2.2" />
+  </ItemGroup>
+
+  <ItemGroup Label="Security">
+    <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.3.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.11" />
+  </ItemGroup>
+
+  <ItemGroup Label="Email">
+    <!-- 4.8.0 and earlier carry GHSA-9j88-vvj5-vhgr. Do not downgrade. -->
+    <PackageVersion Include="MailKit" Version="4.17.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Validation">
+    <PackageVersion Include="FluentValidation" Version="11.11.0" />
+    <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="11.11.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Logging">
+    <PackageVersion Include="Serilog.AspNetCore" Version="8.0.3" />
+    <PackageVersion Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageVersion Include="Serilog.Sinks.File" Version="6.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="API documentation">
+    <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.9.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Rate limiting">
+    <!-- Phase 1C: login 5/min/IP, forgot-password 3/hour/email, OTP 3/10min.
+         Uses the built-in ASP.NET Core 8 rate limiter; no package needed. -->
+  </ItemGroup>
+
+</Project>

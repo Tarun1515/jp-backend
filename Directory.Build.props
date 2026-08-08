@@ -1,0 +1,37 @@
+<Project>
+
+  <!--
+    Applies to every project under backend/.
+    Keeps target framework and compiler strictness in one place.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- A warning that reaches main is a warning nobody will ever fix. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- CS1591: missing XML comment on a public member. Documentation is
+         required where it earns its place, not mechanically everywhere. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!--
+      MUST stay false. Microsoft.Data.SqlClient refuses to open a connection
+      under globalization-invariant mode — it throws
+      "Globalization Invariant Mode is not supported" the first time anything
+      touches the database. Every project here reaches SQL Server directly or
+      through JP.Infrastructure, so there is no build that benefits from it.
+    -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Default analysis mode. Deliberately NOT 'latest-recommended': combined
+         with TreatWarningsAsErrors that turns style opinions into build
+         failures, which trains people to disable the whole thing. -->
+    <AnalysisLevel>latest</AnalysisLevel>
+  </PropertyGroup>
+
+</Project>
