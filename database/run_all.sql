@@ -168,9 +168,10 @@ GO
 
 :r $(DbRoot)\jp_mdm\00_create_database.sql
 
--- ---- tables: 23 masters, then 8 transactional in dependency order, then the
--- ---- error log. Order matters — a FK cannot reference a table that does not
--- ---- exist yet, and geography is a four-level hierarchy.
+-- ---- tables: 23 masters, then 8 transactional in dependency order, the error
+-- ---- log, and the two tables Phase 2C added (the RequestNo prefix column and
+-- ---- the per-type-per-year counter). Order matters — a FK cannot reference a
+-- ---- table that does not exist yet, and geography is a four-level hierarchy.
 PRINT '  Tables ...';
 GO
 :r $(DbRoot)\jp_mdm\01_tables\001_m_mdm_country.sql
@@ -205,6 +206,8 @@ GO
 :r $(DbRoot)\jp_mdm\01_tables\030_t_mdm_teacher_registration_details.sql
 :r $(DbRoot)\jp_mdm\01_tables\031_t_mdm_teacher_registration_subjects.sql
 :r $(DbRoot)\jp_mdm\01_tables\032_t_mdm_error_log.sql
+:r $(DbRoot)\jp_mdm\01_tables\033_alter_m_mdm_request_types_prefix.sql
+:r $(DbRoot)\jp_mdm\01_tables\034_t_mdm_request_number_series.sql
 
 -- ---- indexes: access paths only. Business-key uniques live beside their table
 -- ---- in 01_tables, because a business key is part of what the table means
@@ -213,18 +216,24 @@ PRINT '  Indexes ...';
 GO
 :r $(DbRoot)\jp_mdm\02_indexes\001_ix_jp_mdm_foreign_keys.sql
 
--- ---- seed: ONLY the five masters that are ours to define. Geography,
--- ---- education and profile are Phase 2B, blocked on the client lists.
+-- ---- seed: the five masters that are ours to define, then the approval level
+-- ---- configuration. Geography, education and profile are Phase 2B.
+-- ---- Levels come AFTER the masters: they reference RequestTypeId.
 PRINT '  Seed ...';
 GO
 :r $(DbRoot)\jp_mdm\03_seed\001_seed_approval_masters.sql
+:r $(DbRoot)\jp_mdm\03_seed\002_seed_request_levels.sql
 
--- ---- programmability: functions first, then USP_LogError, which every other
--- ---- procedure calls from its CATCH block.
+-- ---- programmability: IST functions first, then USP_LogError which every
+-- ---- other procedure calls from its CATCH block, then the approval engine.
 PRINT '  Functions and procedures ...';
 GO
 :r $(DbRoot)\jp_mdm\04_procedures\000_USP_LogError.sql
 :r $(DbRoot)\jp_mdm\04_procedures\000_fn_datetime_ist.sql
+:r $(DbRoot)\jp_mdm\04_procedures\001_approval_submit.sql
+:r $(DbRoot)\jp_mdm\04_procedures\002_approval_action.sql
+:r $(DbRoot)\jp_mdm\04_procedures\003_approval_reads.sql
+:r $(DbRoot)\jp_mdm\04_procedures\004_documents_masters.sql
 
 
 /*==============================================================================

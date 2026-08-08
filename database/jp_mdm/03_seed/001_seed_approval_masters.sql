@@ -48,18 +48,20 @@ GO
 ------------------------------------------------------------------------------*/
 MERGE dbo.m_mdm_request_types AS tgt
 USING (VALUES
-        (1, 'SCHOOL_REG',     N'School registration',   1),
-        (2, 'TEACHER_VERIFY', N'Teacher verification',  2),
-        (3, 'BRANCH_ADD',     N'Add branch',            3),
-        (4, 'OFFER_APPROVAL', N'Offer approval',        4)
-      ) AS src (RequestTypeId, Code, Name, DisplayOrder)
+        (1, 'SCHOOL_REG',     N'School registration',   1, 'REG-SCH'),
+        (2, 'TEACHER_VERIFY', N'Teacher verification',  2, 'REG-TCH'),
+        (3, 'BRANCH_ADD',     N'Add branch',            3, 'REG-BRN'),
+        (4, 'OFFER_APPROVAL', N'Offer approval',        4, 'OFR')
+      ) AS src (RequestTypeId, Code, Name, DisplayOrder, RequestNoPrefix)
     ON tgt.RequestTypeId = src.RequestTypeId
-WHEN MATCHED AND (tgt.Code <> src.Code OR tgt.Name <> src.Name OR tgt.DisplayOrder <> src.DisplayOrder)
+WHEN MATCHED AND (tgt.Code <> src.Code OR tgt.Name <> src.Name OR tgt.DisplayOrder <> src.DisplayOrder
+                  OR ISNULL(tgt.RequestNoPrefix, '') <> src.RequestNoPrefix)
     THEN UPDATE SET tgt.Code = src.Code, tgt.Name = src.Name,
-                    tgt.DisplayOrder = src.DisplayOrder, tgt.ModifiedOn = SYSUTCDATETIME()
+                    tgt.DisplayOrder = src.DisplayOrder,
+                    tgt.RequestNoPrefix = src.RequestNoPrefix, tgt.ModifiedOn = SYSUTCDATETIME()
 WHEN NOT MATCHED BY TARGET
-    THEN INSERT (RequestTypeId, Code, Name, DisplayOrder)
-         VALUES (src.RequestTypeId, src.Code, src.Name, src.DisplayOrder);
+    THEN INSERT (RequestTypeId, Code, Name, DisplayOrder, RequestNoPrefix)
+         VALUES (src.RequestTypeId, src.Code, src.Name, src.DisplayOrder, src.RequestNoPrefix);
 GO
 
 /*------------------------------------------------------------------------------
