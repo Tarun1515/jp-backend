@@ -168,10 +168,63 @@ GO
 
 :r $(DbRoot)\jp_mdm\00_create_database.sql
 
--- PHASE 2 — tables (31: 23 masters + 8 transactional)
--- PHASE 2 — indexes
--- PHASE 2 — seed (geography, education, profile, approval + payment masters)
--- PHASE 2 — stored procedures
+-- ---- tables: 23 masters, then 8 transactional in dependency order, then the
+-- ---- error log. Order matters — a FK cannot reference a table that does not
+-- ---- exist yet, and geography is a four-level hierarchy.
+PRINT '  Tables ...';
+GO
+:r $(DbRoot)\jp_mdm\01_tables\001_m_mdm_country.sql
+:r $(DbRoot)\jp_mdm\01_tables\002_m_mdm_state.sql
+:r $(DbRoot)\jp_mdm\01_tables\003_m_mdm_district.sql
+:r $(DbRoot)\jp_mdm\01_tables\004_m_mdm_city.sql
+:r $(DbRoot)\jp_mdm\01_tables\005_m_mdm_board.sql
+:r $(DbRoot)\jp_mdm\01_tables\006_m_mdm_school_type.sql
+:r $(DbRoot)\jp_mdm\01_tables\007_m_mdm_qualification.sql
+:r $(DbRoot)\jp_mdm\01_tables\008_m_mdm_subject.sql
+:r $(DbRoot)\jp_mdm\01_tables\009_m_mdm_designation.sql
+:r $(DbRoot)\jp_mdm\01_tables\010_m_mdm_class_level.sql
+:r $(DbRoot)\jp_mdm\01_tables\011_m_mdm_stream.sql
+:r $(DbRoot)\jp_mdm\01_tables\012_m_mdm_gender.sql
+:r $(DbRoot)\jp_mdm\01_tables\013_m_mdm_skill.sql
+:r $(DbRoot)\jp_mdm\01_tables\014_m_mdm_language.sql
+:r $(DbRoot)\jp_mdm\01_tables\015_m_mdm_facility.sql
+:r $(DbRoot)\jp_mdm\01_tables\016_m_mdm_experience_range.sql
+:r $(DbRoot)\jp_mdm\01_tables\017_m_mdm_request_types.sql
+:r $(DbRoot)\jp_mdm\01_tables\018_m_mdm_approval_status.sql
+:r $(DbRoot)\jp_mdm\01_tables\019_m_mdm_action_types.sql
+:r $(DbRoot)\jp_mdm\01_tables\020_m_mdm_document_types.sql
+:r $(DbRoot)\jp_mdm\01_tables\021_m_mdm_rejection_reasons.sql
+:r $(DbRoot)\jp_mdm\01_tables\022_m_mdm_payment_modes.sql
+:r $(DbRoot)\jp_mdm\01_tables\023_m_mdm_payment_status.sql
+:r $(DbRoot)\jp_mdm\01_tables\024_t_mdm_request_levels.sql
+:r $(DbRoot)\jp_mdm\01_tables\025_t_mdm_approval_requests.sql
+:r $(DbRoot)\jp_mdm\01_tables\026_t_mdm_request_approvals.sql
+:r $(DbRoot)\jp_mdm\01_tables\027_t_mdm_request_documents.sql
+:r $(DbRoot)\jp_mdm\01_tables\028_t_mdm_request_payments.sql
+:r $(DbRoot)\jp_mdm\01_tables\029_t_mdm_school_registration_details.sql
+:r $(DbRoot)\jp_mdm\01_tables\030_t_mdm_teacher_registration_details.sql
+:r $(DbRoot)\jp_mdm\01_tables\031_t_mdm_teacher_registration_subjects.sql
+:r $(DbRoot)\jp_mdm\01_tables\032_t_mdm_error_log.sql
+
+-- ---- indexes: access paths only. Business-key uniques live beside their table
+-- ---- in 01_tables, because a business key is part of what the table means
+-- ---- rather than a performance decision.
+PRINT '  Indexes ...';
+GO
+:r $(DbRoot)\jp_mdm\02_indexes\001_ix_jp_mdm_foreign_keys.sql
+
+-- ---- seed: ONLY the five masters that are ours to define. Geography,
+-- ---- education and profile are Phase 2B, blocked on the client lists.
+PRINT '  Seed ...';
+GO
+:r $(DbRoot)\jp_mdm\03_seed\001_seed_approval_masters.sql
+
+-- ---- programmability: functions first, then USP_LogError, which every other
+-- ---- procedure calls from its CATCH block.
+PRINT '  Functions and procedures ...';
+GO
+:r $(DbRoot)\jp_mdm\04_procedures\000_USP_LogError.sql
+:r $(DbRoot)\jp_mdm\04_procedures\000_fn_datetime_ist.sql
 
 
 /*==============================================================================
