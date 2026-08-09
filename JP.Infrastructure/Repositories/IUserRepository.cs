@@ -54,6 +54,19 @@ internal interface IUserRepository
     Task<OtpVerifyResult> VerifyOtpAsync(long userId, int channelId, string otpHash,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Activates a user as the result of an approval, keyed by numeric id.
+    /// </summary>
+    /// <remarks>
+    /// Reads the Uid and current RowVersion, then calls the same
+    /// USP_UpdateUserStatus every other status change goes through — so role
+    /// granting and token revocation keep exactly one implementation. The
+    /// concurrency check is satisfied with the value just read, because here
+    /// the server is the actor rather than an admin holding a stale screen.
+    /// </remarks>
+    Task<UpdateStatusResult> UpdateUserStatusForApprovalAsync(long userId, int newStatusId,
+        long actionByUserId, CancellationToken cancellationToken);
+
     Task<UpdateStatusResult> UpdateUserStatusAsync(Guid userUid, int newStatusId, int rowVersion,
         long actionByUserId, string? remarks, CancellationToken cancellationToken);
 

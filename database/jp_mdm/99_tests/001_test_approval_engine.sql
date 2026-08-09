@@ -284,6 +284,92 @@ SELECT 'concurrency', 'the losing action left no trail row',
 FROM dbo.t_mdm_request_approvals WHERE RequestId = @RaceId AND ActionTypeId IN (1, 2);
 
 /*==============================================================================
+  5b. THE RowVersion CHECK ITSELF — the branch section 5 never reaches
+
+  🔴 Section 5 above asserts the right OUTCOME for the wrong REASON.
+
+  MVP configures one level, so any successful approve COMPLETES the request. The
+  second attempt is therefore refused by the STATUS check — INVALID_STATUS,
+  "already approved" — and RowVersion is never compared at all. The assertion
+  passes while the code it names never executes. That was found by independent
+  verification on 2026-08-09, not by this suite (gap G10).
+
+  To reach the RowVersion branch the request must still be Pending after the
+  first action, which needs two levels. The level configuration is changed here
+  and restored at the end of the block, all inside the suite's transaction.
+
+  This also covers multi-level advancement, which nothing else here exercises.
+==============================================================================*/
+DECLARE @TwoLevelEntity uniqueidentifier = NEWID(), @TwoLevelId bigint, @TwoLevelRV int;
+
+-- Make request type 1 two-level for the duration of this block.
+UPDATE dbo.t_mdm_request_levels SET IsFinalLevel = 0
+WHERE RequestTypeId = 1 AND LevelNumber = 1 AND OrganizationUid IS NULL AND Is_Deleted = 0;
+
+INSERT INTO dbo.t_mdm_request_levels (RequestTypeId, LevelNumber, RoleId, IsFinalLevel, OrganizationUid)
+VALUES (1, 2, 2, 1, NULL);
+
+EXEC dbo.USP_SubmitApprovalRequest
+     @RequestTypeId = 1, @EntityUid = @TwoLevelEntity, @RequestorUserId = @Requestor,
+     @SchoolName = N'Two Level School';
+
+SELECT @TwoLevelId = RequestId, @TwoLevelRV = RowVersion
+FROM dbo.t_mdm_approval_requests WHERE EntityUid = @TwoLevelEntity AND Is_Deleted = 0;
+
+-- Admin A approves level 1. The request must stay Pending and advance.
+EXEC dbo.USP_ProcessApprovalAction
+     @RequestId = @TwoLevelId, @ActionTypeId = 1, @ActionByUserId = @Admin,
+     @RowVersion = @TwoLevelRV, @ActorRoleIds = @AdminRoles;
+
+INSERT INTO @Assert (Area, Name, Passed, Detail)
+SELECT 'multilevel', 'approving a non-final level keeps it Pending and advances',
+       CASE WHEN StatusId = 1 AND CurrentApprovalLevel = 2 AND CompletedOn IS NULL THEN 1 ELSE 0 END,
+       CONCAT('StatusId=', StatusId, ' Level=', CurrentApprovalLevel,
+              ' Completed=', CASE WHEN CompletedOn IS NULL THEN 'null' ELSE 'set' END)
+FROM dbo.t_mdm_approval_requests WHERE RequestId = @TwoLevelId;
+
+DECLARE @TwoLevelTrailBefore int =
+    (SELECT COUNT(*) FROM dbo.t_mdm_request_approvals WHERE RequestId = @TwoLevelId);
+
+-- Admin B acts on the STALE RowVersion while the request is still Pending.
+-- Only the RowVersion check can refuse this one.
+EXEC dbo.USP_ProcessApprovalAction
+     @RequestId = @TwoLevelId, @ActionTypeId = 1, @ActionByUserId = @Admin,
+     @RowVersion = @TwoLevelRV, @ActorRoleIds = @AdminRoles;
+
+INSERT INTO @Assert (Area, Name, Passed, Detail)
+SELECT 'concurrency', 'stale RowVersion is refused while the request is still Pending',
+       CASE WHEN StatusId = 1 AND CurrentApprovalLevel = 2 THEN 1 ELSE 0 END,
+       CONCAT('StatusId=', StatusId, ' Level=', CurrentApprovalLevel)
+FROM dbo.t_mdm_approval_requests WHERE RequestId = @TwoLevelId;
+
+INSERT INTO @Assert (Area, Name, Passed, Detail)
+SELECT 'concurrency', 'the refused stale action left no trail row',
+       CASE WHEN COUNT(*) = @TwoLevelTrailBefore THEN 1 ELSE 0 END,
+       CONCAT('trail rows=', COUNT(*), ' expected=', @TwoLevelTrailBefore)
+FROM dbo.t_mdm_request_approvals WHERE RequestId = @TwoLevelId;
+
+-- Approving at the final level completes it.
+SELECT @TwoLevelRV = RowVersion FROM dbo.t_mdm_approval_requests WHERE RequestId = @TwoLevelId;
+
+EXEC dbo.USP_ProcessApprovalAction
+     @RequestId = @TwoLevelId, @ActionTypeId = 1, @ActionByUserId = @Admin,
+     @RowVersion = @TwoLevelRV, @ActorRoleIds = @AdminRoles;
+
+INSERT INTO @Assert (Area, Name, Passed, Detail)
+SELECT 'multilevel', 'approving the final level completes the request',
+       CASE WHEN StatusId = 3 AND CompletedOn IS NOT NULL THEN 1 ELSE 0 END,
+       CONCAT('StatusId=', StatusId)
+FROM dbo.t_mdm_approval_requests WHERE RequestId = @TwoLevelId;
+
+-- Restore the single-level configuration for the sections that follow.
+DELETE FROM dbo.t_mdm_request_levels
+WHERE RequestTypeId = 1 AND LevelNumber = 2 AND OrganizationUid IS NULL;
+
+UPDATE dbo.t_mdm_request_levels SET IsFinalLevel = 1
+WHERE RequestTypeId = 1 AND LevelNumber = 1 AND OrganizationUid IS NULL AND Is_Deleted = 0;
+
+/*==============================================================================
   6. REPEATED SUBMIT — no second Pending request, and no new RequestNo
 ==============================================================================*/
 DECLARE @DupEntity uniqueidentifier = NEWID(), @DupFirst bigint, @DupNo varchar(30);

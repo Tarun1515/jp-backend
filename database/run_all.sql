@@ -157,6 +157,7 @@ GO
 :r $(DbRoot)\jp_sso\04_procedures\006_admin.sql
 :r $(DbRoot)\jp_sso\04_procedures\007_lists.sql
 :r $(DbRoot)\jp_sso\04_procedures\008_menus.sql
+:r $(DbRoot)\jp_sso\04_procedures\009_identity_lookup.sql
 
 
 /*==============================================================================
@@ -239,6 +240,7 @@ GO
 :r $(DbRoot)\jp_mdm\04_procedures\002_approval_action.sql
 :r $(DbRoot)\jp_mdm\04_procedures\003_approval_reads.sql
 :r $(DbRoot)\jp_mdm\04_procedures\004_documents_masters.sql
+:r $(DbRoot)\jp_mdm\04_procedures\005_document_lookup.sql
 
 
 /*==============================================================================
@@ -250,10 +252,17 @@ GO
 
 :r $(DbRoot)\jp_app\00_create_database.sql
 
--- PHASE 3 — tables (39: 7 masters + 32 transactional)
--- PHASE 3 — indexes
--- PHASE 3 — seed
--- PHASE 3 — stored procedures
+-- ⚠️ PHASE 2D pulled two of these forward from Phase 3: the cross-database
+-- step after an approval needs a real place to write. Phase 3 adds the rest.
+PRINT '  Tables ...';
+GO
+:r $(DbRoot)\jp_app\01_tables\001_t_app_schools.sql
+:r $(DbRoot)\jp_app\01_tables\002_t_app_error_log.sql
+
+PRINT '  Functions and procedures ...';
+GO
+:r $(DbRoot)\jp_app\04_procedures\000_USP_LogError.sql
+:r $(DbRoot)\jp_app\04_procedures\001_provisioning.sql
 
 
 /*==============================================================================

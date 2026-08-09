@@ -303,3 +303,15 @@ internal sealed class MenuRow
     public bool IsMenuVisible { get; set; }
     public bool OpenInNewTab { get; set; }
 }
+
+/// <summary>Identity fields for a user keyed by numeric id (USP_GetUserIdentity).</summary>
+internal sealed class UserIdentityRow
+{
+    public long UserId { get; set; }
+    public Guid UserUid { get; set; }
+    public int UserTypeId { get; set; }
+    public int StatusId { get; set; }
+    public Guid? OrganizationUid { get; set; }
+    public string Email { get; set; } = string.Empty;
+    public int RowVersion { get; set; }
+}

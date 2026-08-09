@@ -98,11 +98,28 @@ public static class DependencyInjection
         services.AddScoped<IRoleRepository, RoleRepository>();
         services.AddScoped<IMenuRepository, MenuRepository>();
 
+        // Phase 2D — jp_mdm and jp_app. Separate repositories because they
+        // target separate databases: two connections, two commits, which is the
+        // shape decision 2.2 requires.
+        services.AddScoped<IMasterRepository, MasterRepository>();
+        services.AddScoped<IApprovalRepository, ApprovalRepository>();
+        services.AddScoped<IProvisioningRepository, ProvisioningRepository>();
+
         // Public service interfaces — the boundary the API talks to.
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<IMenuService, MenuService>();
+
+        // Phase 2D.
+        services.AddScoped<IMasterService, MasterService>();
+        services.AddScoped<IApprovalService, ApprovalService>();
+        services.AddScoped<IDocumentService, DocumentService>();
+
+        // The cross-database work that follows a completed approval. Scoped,
+        // not singleton: it depends on scoped repositories, and each run
+        // belongs to one request.
+        services.AddScoped<IApprovalOrchestrationService, ApprovalOrchestrationService>();
 
         // IMiddleware implementations are resolved from DI per request.
         services.AddTransient<GlobalExceptionHandlerMiddleware>();

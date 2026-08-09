@@ -99,6 +99,20 @@ public static class AppConstants
         public const string App = "App";
     }
 
+    /// <summary>
+    /// Seeded permission codes.
+    /// </summary>
+    /// <remarks>
+    /// These match t_sso_permissions.Code exactly. A permission checked with a
+    /// string literal at the call site is one nobody can find when the code is
+    /// renamed, and one a typo turns into a silent allow-nobody.
+    /// </remarks>
+    public static class PermissionCodes
+    {
+        public const string VerificationSchool = "VERIFICATION.SCHOOL";
+        public const string VerificationTeacher = "VERIFICATION.TEACHER";
+    }
+
     /// <summary>Seeded role codes. See DB_TABLE_STRUCTURE.md.</summary>
     public static class RoleCodes
     {

@@ -1,5 +1,6 @@
 using System.Data;
 using Dapper;
+using JP.Core.Constants;
 using JP.Core.Enums;
 using JP.Domain.Users;
 using JP.Infrastructure.Data;
@@ -270,6 +271,57 @@ internal sealed class UserRepository : BaseRepository, IUserRepository
     // -----------------------------------------------------------------------
     // Administration
     // -----------------------------------------------------------------------
+
+    public async Task<UpdateStatusResult> UpdateUserStatusForApprovalAsync(
+        long userId, int newStatusId, long actionByUserId, CancellationToken cancellationToken)
+    {
+        var lookup = new DynamicParameters();
+        lookup.Add("@UserId", userId, DbType.Int64);
+
+        var identity = await QueryFirstOrDefaultAsync<UserIdentityRow>(
+            "USP_GetUserIdentity", lookup, cancellationToken).ConfigureAwait(false);
+
+        if (identity is null)
+        {
+            return new UpdateStatusResult
+            {
+                Status = 0,
+                Code = ErrorCodes.NotFound,
+                Message = "That account was not found.",
+            };
+        }
+
+        /*
+          🔴 ALREADY IN THE TARGET STATE IS SUCCESS, NOT A FAILURE.
+
+          USP_UpdateUserStatus rejects a no-op transition with
+          BUSINESS_RULE_VIOLATED — correct for an admin pressing a button
+          twice, wrong here.
+
+          This path exists for retries. The cross-database orchestration has no
+          distributed transaction, so the recovery for "user activated, school
+          not created" is to run it again — and if that re-run treated the
+          already-Active user as a failure, it would stop at step 1 and NEVER
+          reach the provisioning that was the whole reason for retrying. The
+          orphan would be permanent.
+
+          Checked on the status just read rather than by matching the
+          procedure's message, which is display text and not a contract.
+        */
+        if (identity.StatusId == newStatusId)
+        {
+            return new UpdateStatusResult
+            {
+                Status = 1,
+                Code = null,
+                Message = "The account was already active.",
+            };
+        }
+
+        return await UpdateUserStatusAsync(
+            identity.UserUid, newStatusId, identity.RowVersion, actionByUserId,
+            "Activated by approval.", cancellationToken).ConfigureAwait(false);
+    }
 
     public Task<UpdateStatusResult> UpdateUserStatusAsync(
         Guid userUid, int newStatusId, int rowVersion, long actionByUserId, string? remarks,
