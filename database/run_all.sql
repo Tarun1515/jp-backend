@@ -223,6 +223,11 @@ PRINT '  Seed ...';
 GO
 :r $(DbRoot)\jp_mdm\03_seed\001_seed_approval_masters.sql
 :r $(DbRoot)\jp_mdm\03_seed\002_seed_request_levels.sql
+:r $(DbRoot)\jp_mdm\03_seed\003_seed_geography.sql
+:r $(DbRoot)\jp_mdm\03_seed\004_seed_education.sql
+:r $(DbRoot)\jp_mdm\03_seed\005_seed_profile.sql
+:r $(DbRoot)\jp_mdm\03_seed\006_seed_provisional_masters.sql
+:r $(DbRoot)\jp_mdm\03_seed\007_seed_provisional_documents.sql
 
 -- ---- programmability: IST functions first, then USP_LogError which every
 -- ---- other procedure calls from its CATCH block, then the approval engine.
