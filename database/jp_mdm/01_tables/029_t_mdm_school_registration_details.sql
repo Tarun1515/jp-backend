@@ -32,6 +32,22 @@ BEGIN
         BoardId             int               NULL,
         AffiliationNumber   varchar(50)       NULL,
         RegistrationNo      varchar(50)       NULL,
+
+        /*
+          PAN. Collected at registration, and carried through provisioning so
+          the school does not have to supply it twice.
+
+          ⚠️ NULLABLE, and staying that way. Some smaller schools will not have
+          it to hand at the moment they sign up, and blocking registration on a
+          field an admin can chase later costs more sign-ups than it saves
+          effort. Format is checked when a value IS given — AAAAA9999A,
+          uppercased — but its absence is not an error.
+
+          The PAN DOCUMENT is separate and already exists as a document type.
+          Number and scan are collected together and verified together.
+        */
+        PanNumber           varchar(10)       NULL,
+
         LogoPath            nvarchar(500)     NULL,
         -- 1 = single school, 2 = part of a group. tinyint per spec.
         GroupType           tinyint           NULL,
@@ -86,5 +102,23 @@ END
 ELSE
 BEGIN
     PRINT '    Table [t_mdm_school_registration_details] already exists — skipped.';
+END
+GO
+
+/*------------------------------------------------------------------------------
+  PanNumber, added in Phase 2F.
+
+  In the CREATE above for a fresh database; here for one that already exists.
+  ⚠️ Both paths, always. A column that lives only in the CREATE is a column
+  every existing environment silently lacks, and it surfaces as "invalid
+  column name" from a procedure rather than from anything naming the change.
+------------------------------------------------------------------------------*/
+IF NOT EXISTS (SELECT 1 FROM sys.columns
+               WHERE Name = N'PanNumber'
+                 AND Object_ID = OBJECT_ID(N'dbo.t_mdm_school_registration_details'))
+BEGIN
+    PRINT '    Adding [PanNumber] to [t_mdm_school_registration_details] ...';
+
+    ALTER TABLE dbo.t_mdm_school_registration_details ADD PanNumber varchar(10) NULL;
 END
 GO

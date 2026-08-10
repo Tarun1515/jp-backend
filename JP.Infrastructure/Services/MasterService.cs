@@ -1,5 +1,6 @@
 using JP.Domain.Masters;
 using JP.Infrastructure.Repositories;
+using Microsoft.Extensions.Logging;
 
 namespace JP.Infrastructure.Services;
 
@@ -27,10 +28,12 @@ public interface IMasterService
 internal sealed class MasterService : IMasterService
 {
     private readonly IMasterRepository _repository;
+    private readonly ILogger<MasterService> _logger;
 
-    public MasterService(IMasterRepository repository)
+    public MasterService(IMasterRepository repository, ILogger<MasterService> logger)
     {
         _repository = repository;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<MasterItemDto>> GetAsync(
@@ -38,8 +41,32 @@ internal sealed class MasterService : IMasterService
         int? parentId,
         CancellationToken cancellationToken)
     {
-        var rows = await _repository.GetAsync(masterKey ?? string.Empty, parentId, cancellationToken)
+        var (rows, recognised) = await _repository
+            .GetAsync(masterKey ?? string.Empty, parentId, cancellationToken)
             .ConfigureAwait(false);
+
+        /*
+          🔴 THE CALLER LEARNS NOTHING. WE LEARN IMMEDIATELY.
+
+          An unrecognised key still returns an empty list — a client probing
+          for table names must not be able to tell a real-but-empty master
+          from one that does not exist.
+
+          But a whitelist that fails closed and silently deflects an attacker
+          and hides our own typo equally well, and only the first was intended.
+          The school-type key mismatch (2.49) returned 200 with no rows for
+          weeks and was found by a person noticing a blank dropdown.
+
+          Warning, not error: the response is correct, and an alert that fires
+          on every probe from the internet would be turned off within a day.
+        */
+        if (!recognised)
+        {
+            _logger.LogWarning(
+                "Master key {MasterKey} is not in USP_GetMaster's whitelist. The caller got an empty list. " +
+                "If this came from our own client, it is a typo or a key the procedure never learned.",
+                masterKey);
+        }
 
         return rows.Select(ToDto).ToList();
     }
@@ -60,11 +87,15 @@ internal sealed class MasterService : IMasterService
     /// </remarks>
     public async Task<MasterBundleDto> GetBundleAsync(CancellationToken cancellationToken)
     {
-        async Task<IReadOnlyList<MasterItemDto>> Get(string key) =>
-            (await _repository.GetAsync(key, null, cancellationToken).ConfigureAwait(false))
-            .Select(ToDto).ToList();
+        // Goes through GetAsync rather than the repository directly, so an
+        // unrecognised key in THIS list logs the same warning as one from a
+        // client. The bundle's keys are hardcoded here, which is exactly where
+        // a typo would otherwise be hardest to notice.
+        Task<IReadOnlyList<MasterItemDto>> Get(string key) =>
+            GetAsync(key, null, cancellationToken);
 
-        var documentTypeRows = await _repository.GetAsync("DOCUMENT_TYPE", null, cancellationToken)
+        var (documentTypeRows, _) = await _repository
+            .GetAsync("DOCUMENT_TYPE", null, cancellationToken)
             .ConfigureAwait(false);
 
         return new MasterBundleDto

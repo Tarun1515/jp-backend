@@ -27,6 +27,12 @@ public interface IApprovalService
     Task<IReadOnlyList<OrphanedApprovalDto>> GetOrphanedAsync(int sinceDays, ClaimsPrincipal caller, CancellationToken cancellationToken);
 
     Task<ProcessActionResponse> RetryOrchestrationAsync(long requestId, ClaimsPrincipal caller, CancellationToken cancellationToken);
+
+    Task<SaveDraftResponse> SaveDraftAsync(SaveDraftRequest request, ClaimsPrincipal caller, CancellationToken cancellationToken);
+
+    Task<ApprovalRequestDetailDto?> GetDraftAsync(ClaimsPrincipal caller, CancellationToken cancellationToken);
+
+    Task<SubmitApprovalResponse> SubmitDraftAsync(long requestId, ClaimsPrincipal caller, string? ipAddress, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -46,6 +52,10 @@ internal sealed class ApprovalService : IApprovalService
 
     /// <summary>m_mdm_approval_status. Approved.</summary>
     private const int StatusApproved = 3;
+
+    /// <summary>Five letters, four digits, one letter. Compiled once.</summary>
+    private static readonly System.Text.RegularExpressions.Regex PanFormat =
+        new("^[A-Z]{5}[0-9]{4}[A-Z]$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private readonly IApprovalRepository _repository;
     private readonly IProvisioningRepository _provisioning;
@@ -76,6 +86,10 @@ internal sealed class ApprovalService : IApprovalService
         // 🔴 Both from the token. Never from the payload.
         var requestorUserId = caller.GetUserId();
         var organizationUid = caller.GetOrganizationUid();
+
+        // Same rule on both paths into a registration. A form posted straight
+        // through must not be able to store a PAN the draft path would refuse.
+        request = request with { PanNumber = NormalisePan(request.PanNumber) };
 
         var result = await _repository
             .SubmitAsync(request, organizationUid, requestorUserId, ipAddress, cancellationToken)
@@ -301,6 +315,146 @@ internal sealed class ApprovalService : IApprovalService
             : (Guid?)caller.RequireOrganizationUid();
 
         return _repository.GetPendingCountsAsync(scope, cancellationToken);
+    }
+
+    /// <summary>
+    /// Saves the registration form as it currently stands.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 SERVER-SIDE, NOT localStorage.
+    /// </para>
+    /// <para>
+    /// The form is six steps plus documents. Somebody will start it on a laptop
+    /// during the working day and finish it on a phone that evening, and a
+    /// draft that exists in one browser is a draft they lose — along with the
+    /// documents they had already uploaded, which is the point at which they do
+    /// not come back.
+    /// </para>
+    /// <para>
+    /// PAN is validated here rather than only on the client, for the ordinary
+    /// reason: the client is a convenience and the server is the rule.
+    /// </para>
+    /// </remarks>
+    public async Task<SaveDraftResponse> SaveDraftAsync(
+        SaveDraftRequest request,
+        ClaimsPrincipal caller,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(caller);
+
+        request = request with { PanNumber = NormalisePan(request.PanNumber) };
+
+        var result = await _repository
+            .SaveDraftAsync(request, caller.GetOrganizationUid(), caller.GetUserId(), cancellationToken)
+            .ConfigureAwait(false);
+
+        result.EnsureSuccess();
+
+        return new SaveDraftResponse
+        {
+            RequestId = result.Id ?? 0,
+            EntityUid = result.EntityUid ?? Guid.Empty,
+            Message = result.Message,
+        };
+    }
+
+    /// <summary>The caller's draft, if they have one.</summary>
+    /// <remarks>
+    /// Returns null rather than 404 when there is no draft: not having started
+    /// is the normal case, and an error status for it would make every first
+    /// visit to the form look like a failure in the network tab.
+    /// </remarks>
+    public async Task<ApprovalRequestDetailDto?> GetDraftAsync(
+        ClaimsPrincipal caller,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        var requestId = await _repository.GetDraftIdAsync(caller.GetUserId(), cancellationToken)
+            .ConfigureAwait(false);
+
+        if (requestId is null)
+        {
+            return null;
+        }
+
+        var detail = await _repository.GetByIdAsync(requestId.Value, cancellationToken)
+            .ConfigureAwait(false);
+
+        // The draft was found by the caller's own id, so this is belt and
+        // braces — but it is the check that would matter if that lookup ever
+        // grew a parameter.
+        if (detail is not null)
+        {
+            EnsureCanRead(detail.Header, caller);
+        }
+
+        return detail;
+    }
+
+    /// <summary>
+    /// Turns the caller's draft into a request the admin queue can see.
+    /// </summary>
+    /// <remarks>
+    /// The real request number is allocated here rather than at draft time, so
+    /// an abandoned draft leaves no hole in a sequence people read as complete.
+    /// </remarks>
+    public async Task<SubmitApprovalResponse> SubmitDraftAsync(
+        long requestId,
+        ClaimsPrincipal caller,
+        string? ipAddress,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        var result = await _repository
+            .SubmitDraftAsync(requestId, caller.GetUserId(), ipAddress, cancellationToken)
+            .ConfigureAwait(false);
+
+        result.EnsureSuccess();
+
+        var detail = await _repository.GetByIdAsync(requestId, cancellationToken).ConfigureAwait(false);
+
+        return new SubmitApprovalResponse
+        {
+            RequestId = requestId,
+            RequestNo = detail?.Header.RequestNo ?? string.Empty,
+            AlreadyPending = false,
+            Message = result.Message,
+        };
+    }
+
+    /// <summary>
+    /// Uppercases a PAN and rejects one that is not shaped like a PAN.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Empty stays empty. The field is optional on purpose — see the comment
+    /// on the column — so "no PAN" is a valid answer and only a MALFORMED one
+    /// is an error.
+    ///
+    /// This checks the shape, not the existence of the number: verifying a PAN
+    /// against the income tax department is not something this system does, and
+    /// the uploaded PAN document is what an admin actually checks it against.
+    /// </remarks>
+    private static string? NormalisePan(string? pan)
+    {
+        if (string.IsNullOrWhiteSpace(pan))
+        {
+            return null;
+        }
+
+        var normalised = pan.Trim().ToUpperInvariant();
+
+        if (!PanFormat.IsMatch(normalised))
+        {
+            throw new BusinessRuleException(
+                "That does not look like a PAN. It is ten characters: five letters, four digits, then a letter — for example ABCDE1234F.",
+                ErrorCodes.ValidationFailed);
+        }
+
+        return normalised;
     }
 
     /// <summary>

@@ -49,6 +49,72 @@ public sealed class ApprovalsController : ControllerBase
     }
 
     /// <summary>
+    /// Saves the registration form as it currently stands.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 DRAFTS LIVE ON THE SERVER, NOT IN THE BROWSER.
+    /// </para>
+    /// <para>
+    /// The registration form is six steps plus document uploads. Somebody will
+    /// start it on a laptop and finish it on a phone, and a draft kept in
+    /// localStorage is one they lose — together with the documents already
+    /// uploaded against it, which is the point at which they stop coming back.
+    /// </para>
+    /// <para>
+    /// The draft IS an approval request in Draft status, so documents attach to
+    /// it from the first upload and never have to be migrated at submit.
+    /// </para>
+    /// <para>
+    /// Returns the request id (upload against it) and the entity uid (send it
+    /// back on the next save).
+    /// </para>
+    /// </remarks>
+    [HttpPost("draft")]
+    [ProducesResponseType(typeof(Response<SaveDraftResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> SaveDraft(
+        [FromBody] SaveDraftRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _approvals.SaveDraftAsync(request, User, cancellationToken).ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(result, result.Message));
+    }
+
+    /// <summary>
+    /// The caller's draft, if they have one.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Returns 200 with <c>data: null</c> when there is no draft, not 404.
+    /// Never having started is the ordinary case — the first visit to the form
+    /// is every school's first visit — and an error status for it would make
+    /// the normal path look broken in a log.
+    /// </remarks>
+    [HttpGet("draft")]
+    [ProducesResponseType(typeof(Response<ApprovalRequestDetailDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetDraft(CancellationToken cancellationToken)
+    {
+        var draft = await _approvals.GetDraftAsync(User, cancellationToken).ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(draft));
+    }
+
+    /// <summary>Turns the caller's draft into a request the admin queue can see.</summary>
+    [HttpPost("draft/{id:long}/submit")]
+    [ProducesResponseType(typeof(Response<SubmitApprovalResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> SubmitDraft(long id, CancellationToken cancellationToken)
+    {
+        var result = await _approvals
+            .SubmitDraftAsync(id, User, HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(result, result.Message));
+    }
+
+    /// <summary>
     /// The approval queue, paged and oldest first.
     /// </summary>
     /// <remarks>

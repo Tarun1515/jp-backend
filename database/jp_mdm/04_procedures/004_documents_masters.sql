@@ -246,10 +246,29 @@ GO
 ==============================================================================*/
 CREATE OR ALTER PROCEDURE dbo.USP_GetMaster
     @MasterCode varchar(50),
-    @ParentId   int = NULL     -- for the geography cascade and the scoped masters
+    @ParentId   int = NULL,    -- for the geography cascade and the scoped masters
+
+    /*
+      🔴 1 when the key matched a branch, 0 when it did not.
+
+      The RESPONSE is unchanged either way — an unknown key still returns an
+      empty set, because a caller probing for table names should learn nothing
+      from the difference.
+
+      But we should. A whitelist that fails closed and silently protects
+      against an attacker and hides our own typos equally well, and only one of
+      those was the intention: the school-type key mismatch (2.49) returned 200
+      with no rows for weeks, and was found by a human noticing a blank
+      dropdown rather than by anything in a log.
+
+      So the caller learns nothing and the API logs a warning naming the key.
+    */
+    @Recognised bit = NULL OUTPUT
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    SET @Recognised = 1;
 
     SET @MasterCode = UPPER(REPLACE(LTRIM(RTRIM(@MasterCode)), '-', '_'));
 
@@ -354,10 +373,21 @@ BEGIN
         SELECT PaymentStatusId AS Id, Code, Name, DisplayOrder FROM dbo.m_mdm_payment_status
         WHERE Is_Deleted = 0 AND Is_Active = 1 ORDER BY DisplayOrder;
 
-    /*
-      No ELSE. An unknown code returns nothing at all — not an error, because
-      the caller cannot fix it, and not a guess. The empty set is the answer.
-    */
+    ELSE
+    BEGIN
+        /*
+          An unknown code returns nothing at all — not an error, because the
+          caller cannot fix it, and not a guess.
+
+          The flag is the only thing that changed in Phase 2F: the RESPONSE is
+          identical, and the API turns this into a warning naming the key.
+        */
+        SET @Recognised = 0;
+
+        SELECT TOP (0) CAST(NULL AS int) AS Id, CAST(NULL AS varchar(30)) AS Code,
+                       CAST(NULL AS nvarchar(150)) AS Name, CAST(NULL AS int) AS DisplayOrder;
+    END
+
 END
 GO
 

@@ -9,7 +9,14 @@ namespace JP.Infrastructure.Repositories;
 
 internal interface IMasterRepository
 {
-    Task<IReadOnlyList<MasterRow>> GetAsync(string masterCode, int? parentId, CancellationToken cancellationToken);
+    /// <summary>
+    /// One master list, and whether the key was one the procedure knows.
+    /// </summary>
+    /// <remarks>
+    /// The tuple exists so an unrecognised key can be LOGGED without changing
+    /// what the caller is told. See the note on the implementation.
+    /// </remarks>
+    Task<(IReadOnlyList<MasterRow> Rows, bool Recognised)> GetAsync(string masterCode, int? parentId, CancellationToken cancellationToken);
 
     Task<DocumentTypeRow?> GetDocumentTypeAsync(int documentTypeId, CancellationToken cancellationToken);
 }
@@ -38,7 +45,7 @@ internal sealed class MasterRepository : BaseRepository, IMasterRepository
     /// This repository deliberately adds NO second whitelist. Two gates that
     /// have to agree is how they stop agreeing; the procedure is the gate.
     /// </remarks>
-    public Task<IReadOnlyList<MasterRow>> GetAsync(
+    public async Task<(IReadOnlyList<MasterRow> Rows, bool Recognised)> GetAsync(
         string masterCode,
         int? parentId,
         CancellationToken cancellationToken)
@@ -47,7 +54,21 @@ internal sealed class MasterRepository : BaseRepository, IMasterRepository
         p.Add("@MasterCode", masterCode, DbType.AnsiString, size: 50);
         p.Add("@ParentId", parentId, DbType.Int32);
 
-        return QueryAsync<MasterRow>("USP_GetMaster", p, cancellationToken);
+        // 🔴 The response is identical for an unknown key — empty set, no
+        // error. This output parameter is for US, not the caller: see the
+        // procedure's comment on why a silent whitelist hides our own typos as
+        // effectively as it deflects an attacker.
+        p.Add("@Recognised", dbType: DbType.Boolean, direction: ParameterDirection.Output);
+
+        var rows = await QueryAsync<MasterRow>("USP_GetMaster", p, cancellationToken)
+            .ConfigureAwait(false);
+
+        // Null only if the procedure predates the parameter. Treated as
+        // recognised so an out-of-date database logs nothing rather than
+        // logging everything.
+        var recognised = p.Get<bool?>("@Recognised") ?? true;
+
+        return (rows, recognised);
     }
 
     /// <summary>

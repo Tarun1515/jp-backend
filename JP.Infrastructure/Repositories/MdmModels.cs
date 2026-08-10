@@ -108,6 +108,15 @@ internal sealed class DocumentAccessRow
 }
 
 /// <summary>
+/// What a draft save returns: the envelope plus the entity uid the client has
+/// to send back next time.
+/// </summary>
+internal sealed class SaveDraftProcResult : ProcResult
+{
+    public Guid? EntityUid { get; set; }
+}
+
+/// <summary>
 /// A completed approval that was SUPPOSED to create something in another
 /// database — read from jp_mdm, then offered to jp_app to check.
 /// </summary>

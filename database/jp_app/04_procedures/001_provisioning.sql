@@ -65,6 +65,22 @@ CREATE OR ALTER PROCEDURE dbo.USP_ProvisionSchoolFromApproval
     @DistrictId         int            = NULL,
     @StateId            int            = NULL,
     @Pincode            varchar(10)    = NULL,
+    @PanNumber          varchar(10)    = NULL,
+
+    /*
+      🔴 The plan the new school starts on, resolved by the API.
+
+      Plans live in m_mdm_plans, in jp_mdm. This procedure is in jp_app and
+      cannot read across (decision 2.2), so the caller looks up the default
+      plan for a school and passes the id — exactly the shape the rest of the
+      orchestration takes.
+
+      Required. A school provisioned without a plan is the "no subscription"
+      state the whole design exists to avoid, and accepting NULL here would
+      make it reachable by forgetting one argument.
+    */
+    @PlanId             int            = NULL,
+
     @VerifiedByUserId   bigint         = NULL
 AS
 BEGIN
@@ -82,6 +98,9 @@ BEGIN
         SELECT @Code = 'VALIDATION_FAILED', @Message = N'The organisation is required.';
     ELSE IF ISNULL(@SchoolName, N'') = N''
         SELECT @Code = 'VALIDATION_FAILED', @Message = N'The school name is required.';
+    ELSE IF @PlanId IS NULL
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'A plan is required. Every account starts on one.';
 
     -- Already provisioned? Return it. This is the retry path, and it succeeds.
     IF @Code IS NULL
@@ -100,16 +119,33 @@ BEGIN
         BEGIN TRY
             BEGIN TRANSACTION;
 
+            /*
+              🔴 THREE INSERTS, ONE GUARD, ONE TRANSACTION.
+
+              The school, its head-office branch and its subscription are all
+              created here — INSIDE the SourceRequestUid guard above, not
+              alongside it.
+
+              Outside the guard, a retry after a partial failure would find the
+              school already there, skip it, and then insert a SECOND head
+              office and a SECOND subscription. Nothing would complain at the
+              time; the school would simply have two addresses and two plans,
+              and the person who eventually noticed would have no way to tell
+              which was meant.
+
+              Inside it, and inside one transaction, the set is atomic: either
+              a school with a branch and a plan, or nothing at all.
+            */
             INSERT INTO dbo.t_app_schools
                 (OrganizationUid, SourceRequestUid, SchoolName, SchoolTypeId, BoardId,
-                 AffiliationNumber, RegistrationNo, LogoPath, GroupType, EstablishedYear,
+                 AffiliationNumber, RegistrationNo, PanNumber, LogoPath, GroupType, EstablishedYear,
                  AboutSchool, Website, ContactEmail, ContactMobile,
                  PrincipalName, HrContactName, HrContactMobile,
                  AddressLine1, AddressLine2, CityId, DistrictId, StateId, Pincode,
                  IsVerified, VerifiedOn, VerifiedByUserId, CreatedBy)
             VALUES
                 (@OrganizationUid, @SourceRequestUid, @SchoolName, @SchoolTypeId, @BoardId,
-                 @AffiliationNumber, @RegistrationNo, @LogoPath, @GroupType, @EstablishedYear,
+                 @AffiliationNumber, @RegistrationNo, @PanNumber, @LogoPath, @GroupType, @EstablishedYear,
                  @AboutSchool, @Website, @ContactEmail, @ContactMobile,
                  @PrincipalName, @HrContactName, @HrContactMobile,
                  @AddressLine1, @AddressLine2, @CityId, @DistrictId, @StateId, @Pincode,
@@ -117,6 +153,34 @@ BEGIN
 
             SET @Id = SCOPE_IDENTITY();
             SELECT @SchoolUid = SchoolUid FROM dbo.t_app_schools WHERE SchoolId = @Id;
+
+            /*
+              The head office. Named after the school rather than asked for:
+              registration deliberately does not collect a branch list, and a
+              school that has not yet decided to use the product should not be
+              enumerating campuses. Phase 3 lets them rename it.
+            */
+            INSERT INTO dbo.t_app_school_branches
+                (SchoolId, BranchName, IsHeadOffice,
+                 AddressLine1, AddressLine2, CityId, DistrictId, StateId, Pincode,
+                 ContactEmail, ContactMobile, CreatedBy)
+            VALUES
+                (@Id, @SchoolName, 1,
+                 @AddressLine1, @AddressLine2, @CityId, @DistrictId, @StateId, @Pincode,
+                 @ContactEmail, @ContactMobile, @VerifiedByUserId);
+
+            /*
+              The subscription. EndsOn NULL because the free plan does not
+              expire; StatusId 1 is Active.
+
+              Keyed on the ORGANISATION, not the school: a group with several
+              schools under one organisation is on one plan, which is what the
+              one-active-per-owner index already asserts.
+            */
+            INSERT INTO dbo.t_app_subscriptions
+                (OwnerUid, PlanId, StartsOn, EndsOn, StatusId, AutoRenew, CreatedBy)
+            VALUES
+                (@OrganizationUid, @PlanId, @Now, NULL, 1, 0, @VerifiedByUserId);
 
             COMMIT TRANSACTION;
 

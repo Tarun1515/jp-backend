@@ -209,6 +209,7 @@ GO
 :r $(DbRoot)\jp_mdm\01_tables\032_t_mdm_error_log.sql
 :r $(DbRoot)\jp_mdm\01_tables\033_alter_m_mdm_request_types_prefix.sql
 :r $(DbRoot)\jp_mdm\01_tables\034_t_mdm_request_number_series.sql
+:r $(DbRoot)\jp_mdm\01_tables\035_m_mdm_plans.sql
 
 -- ---- indexes: access paths only. Business-key uniques live beside their table
 -- ---- in 01_tables, because a business key is part of what the table means
@@ -229,6 +230,7 @@ GO
 :r $(DbRoot)\jp_mdm\03_seed\005_seed_profile.sql
 :r $(DbRoot)\jp_mdm\03_seed\006_seed_provisional_masters.sql
 :r $(DbRoot)\jp_mdm\03_seed\007_seed_provisional_documents.sql
+:r $(DbRoot)\jp_mdm\03_seed\008_seed_plans.sql
 
 -- ---- programmability: IST functions first, then USP_LogError which every
 -- ---- other procedure calls from its CATCH block, then the approval engine.
@@ -242,6 +244,8 @@ GO
 :r $(DbRoot)\jp_mdm\04_procedures\004_documents_masters.sql
 :r $(DbRoot)\jp_mdm\04_procedures\005_document_lookup.sql
 :r $(DbRoot)\jp_mdm\04_procedures\006_reconciliation.sql
+:r $(DbRoot)\jp_mdm\04_procedures\007_registration_drafts.sql
+:r $(DbRoot)\jp_mdm\04_procedures\008_plans.sql
 
 
 /*==============================================================================
@@ -259,6 +263,8 @@ PRINT '  Tables ...';
 GO
 :r $(DbRoot)\jp_app\01_tables\001_t_app_schools.sql
 :r $(DbRoot)\jp_app\01_tables\002_t_app_error_log.sql
+:r $(DbRoot)\jp_app\01_tables\003_t_app_school_branches.sql
+:r $(DbRoot)\jp_app\01_tables\004_t_app_subscriptions.sql
 
 PRINT '  Functions and procedures ...';
 GO

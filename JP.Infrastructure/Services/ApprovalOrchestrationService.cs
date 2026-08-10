@@ -86,19 +86,25 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
     // m_mdm_approval_status. Approved — the only status that provisions anything.
     private const int StatusApproved = 3;
 
+    // m_sso_user_types. School.
+    private const int UserTypeSchool = 2;
+
     private readonly IUserRepository _users;
     private readonly IProvisioningRepository _provisioning;
+    private readonly IPlanRepository _plans;
     private readonly IEmailDispatchQueue _emailQueue;
     private readonly ILogger<ApprovalOrchestrationService> _logger;
 
     public ApprovalOrchestrationService(
         IUserRepository users,
         IProvisioningRepository provisioning,
+        IPlanRepository plans,
         IEmailDispatchQueue emailQueue,
         ILogger<ApprovalOrchestrationService> logger)
     {
         _users = users;
         _provisioning = provisioning;
+        _plans = plans;
         _emailQueue = emailQueue;
         _logger = logger;
     }
@@ -216,15 +222,59 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
                 "The approval was recorded but the account could not be activated. It has been logged for investigation.");
         }
 
-        // ---- STEP 2: jp_app — create the school ----------------------------
+        /*
+          ---- STEP 1b: which plan does a new school start on? ----------------
+
+          Read from jp_mdm, passed into jp_app. Neither database can see the
+          other (decision 2.2), so the API is the only place this join can
+          happen — the same reason the reconciliation query takes a list.
+
+          A missing default plan stops provisioning rather than creating a
+          school without one. "Every account has a plan from the moment it
+          exists" is only true if the code refuses to make the exception.
+        */
+        int planId;
+
+        try
+        {
+            var plan = await _plans.GetDefaultPlanAsync(UserTypeSchool, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (plan is null)
+            {
+                _logger.LogError(
+                    "Approval {RequestNo} (RequestId {RequestId}): no default plan is configured for a school. " +
+                    "Nothing was provisioned. Seed m_mdm_plans — SCHOOL_FREE with IsDefault = 1.",
+                    header.RequestNo, header.RequestId);
+
+                return OrchestrationOutcome.Fail(
+                    "The approval was recorded but no default plan is configured, so the school was not created. " +
+                    "This has been logged and needs to be retried once a plan exists.");
+            }
+
+            planId = plan.PlanId;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Approval {RequestNo} (RequestId {RequestId}): reading the default plan threw. Nothing was provisioned.",
+                header.RequestNo, header.RequestId);
+
+            return OrchestrationOutcome.Fail(
+                "The approval was recorded but the school could not be created. It has been logged for investigation.");
+        }
+
+        // ---- STEP 2: jp_app — school, head-office branch, subscription -----
         //
         // 🔴 This is the step that can leave an Active user with no profile.
-        // It is idempotent on SourceRequestUid, so re-running is safe, and a
-        // failure is logged loudly with everything needed to find it again.
+        // All three inserts are idempotent on SourceRequestUid, so re-running
+        // is safe, and a failure is logged loudly with everything needed to
+        // find it again.
         try
         {
             var provisioned = await _provisioning
-                .ProvisionSchoolAsync(header.RequestUid, organizationUid, school, actionByUserId, cancellationToken)
+                .ProvisionSchoolAsync(header.RequestUid, organizationUid, school, planId, actionByUserId, cancellationToken)
                 .ConfigureAwait(false);
 
             if (!provisioned.Succeeded)

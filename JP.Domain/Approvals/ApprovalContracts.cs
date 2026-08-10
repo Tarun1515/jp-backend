@@ -26,6 +26,18 @@ public sealed record SubmitApprovalRequest
     public int? BoardId { get; init; }
     public string? AffiliationNumber { get; init; }
     public string? RegistrationNo { get; init; }
+
+    /// <summary>
+    /// PAN, uppercased, format AAAAA9999A.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Optional, and staying optional. Some smaller schools will not have it
+    /// to hand at the moment they sign up, and blocking registration on a field
+    /// an admin can chase later costs more sign-ups than it saves effort. The
+    /// FORMAT is checked when a value is given; its absence is not an error.
+    /// </remarks>
+    public string? PanNumber { get; init; }
+
     public string? LogoPath { get; init; }
     public byte? GroupType { get; init; }
     public short? EstablishedYear { get; init; }
@@ -61,6 +73,63 @@ public sealed record SubmitApprovalRequest
     public string? CurrentSchool { get; init; }
 
     public IReadOnlyList<int>? SubjectIds { get; init; }
+}
+
+/// <summary>
+/// Save the registration form as it currently stands.
+/// </summary>
+/// <remarks>
+/// <para>
+/// 🔴 No RequestorUserId and no OrganizationUid, for the same reason
+/// <see cref="SubmitApprovalRequest"/> has neither (decision 2.39). Both come
+/// from the token.
+/// </para>
+/// <para>
+/// <see cref="EntityUid"/> IS here, but only as an echo: it is null on the
+/// first save, generated server-side, and returned so a resumed draft keeps
+/// identifying the same school. The server ignores it if a draft already
+/// exists for the caller.
+/// </para>
+/// </remarks>
+public sealed record SaveDraftRequest
+{
+    public Guid? EntityUid { get; init; }
+
+    public string? SchoolName { get; init; }
+    public int? SchoolTypeId { get; init; }
+    public int? BoardId { get; init; }
+    public string? AffiliationNumber { get; init; }
+    public string? RegistrationNo { get; init; }
+    public string? PanNumber { get; init; }
+    public string? LogoPath { get; init; }
+    public byte? GroupType { get; init; }
+    public short? EstablishedYear { get; init; }
+    public string? AddressLine1 { get; init; }
+    public string? AddressLine2 { get; init; }
+    public int? CityId { get; init; }
+    public int? DistrictId { get; init; }
+    public int? StateId { get; init; }
+    public string? Pincode { get; init; }
+    public string? PrincipalName { get; init; }
+    public string? PrincipalMobile { get; init; }
+    public string? HrContactName { get; init; }
+    public string? HrContactMobile { get; init; }
+    public string? ContactEmail { get; init; }
+    public string? ContactMobile { get; init; }
+    public string? Website { get; init; }
+    public string? AboutSchool { get; init; }
+}
+
+/// <summary>What the client needs back from a save to keep going.</summary>
+public sealed record SaveDraftResponse
+{
+    /// <summary>Documents are uploaded against this.</summary>
+    public long RequestId { get; init; }
+
+    /// <summary>Send this back on the next save.</summary>
+    public Guid EntityUid { get; init; }
+
+    public string Message { get; init; } = string.Empty;
 }
 
 /// <summary>The submit result. <see cref="AlreadyPending"/> is a success, not a failure.</summary>
@@ -143,6 +212,7 @@ public sealed record SchoolRegistrationDetailDto
     public int? BoardId { get; init; }
     public string? AffiliationNumber { get; init; }
     public string? RegistrationNo { get; init; }
+    public string? PanNumber { get; init; }
     public string? LogoPath { get; init; }
     public byte? GroupType { get; init; }
     public short? EstablishedYear { get; init; }

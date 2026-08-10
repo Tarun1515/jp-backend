@@ -17,6 +17,15 @@ internal interface IApprovalRepository
 
     Task<ApprovalRequestDetailDto?> GetByIdAsync(long requestId, CancellationToken cancellationToken);
 
+    /// <summary>Creates or updates the caller's registration draft.</summary>
+    Task<SaveDraftProcResult> SaveDraftAsync(SaveDraftRequest request, Guid? organizationUid, long requestorUserId, CancellationToken cancellationToken);
+
+    /// <summary>The caller's draft request id, or null.</summary>
+    Task<long?> GetDraftIdAsync(long requestorUserId, CancellationToken cancellationToken);
+
+    /// <summary>Promotes a draft to Pending, allocating the real request number.</summary>
+    Task<ProcResult> SubmitDraftAsync(long requestId, long requestorUserId, string? ipAddress, CancellationToken cancellationToken);
+
     Task<ProcessActionProcResult> ProcessActionAsync(long requestId, int actionTypeId, long actionByUserId, int rowVersion, int? rejectionReasonId, string? remarks, string? ipAddress, string? actorRoleIds, CancellationToken cancellationToken);
 
     Task<ProcResult> ResubmitAsync(long requestId, long actionByUserId, string? remarks, int rowVersion, string? ipAddress, CancellationToken cancellationToken);
@@ -90,6 +99,7 @@ internal sealed class ApprovalRepository : BaseRepository, IApprovalRepository
         p.Add("@BoardId", request.BoardId, DbType.Int32);
         p.Add("@AffiliationNumber", request.AffiliationNumber, DbType.AnsiString, size: 50);
         p.Add("@RegistrationNo", request.RegistrationNo, DbType.AnsiString, size: 50);
+        p.Add("@PanNumber", request.PanNumber, DbType.AnsiString, size: 10);
         p.Add("@LogoPath", request.LogoPath, DbType.String, size: 500);
         p.Add("@GroupType", request.GroupType, DbType.Byte);
         p.Add("@EstablishedYear", request.EstablishedYear, DbType.Int16);
@@ -277,6 +287,73 @@ internal sealed class ApprovalRepository : BaseRepository, IApprovalRepository
         p.Add("@OrganizationUid", organizationUid, DbType.Guid);
 
         return QueryAsync<PendingCountDto>("USP_GetPendingCountsByType", p, cancellationToken);
+    }
+
+    public Task<SaveDraftProcResult> SaveDraftAsync(
+        SaveDraftRequest request,
+        Guid? organizationUid,
+        long requestorUserId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var p = new DynamicParameters();
+
+        // 🔴 Both from the token, both separate arguments. Same rule as submit.
+        p.Add("@RequestorUserId", requestorUserId, DbType.Int64);
+        p.Add("@OrganizationUid", organizationUid, DbType.Guid);
+
+        p.Add("@EntityUid", request.EntityUid, DbType.Guid);
+        p.Add("@SchoolName", request.SchoolName, DbType.String, size: 200);
+        p.Add("@SchoolTypeId", request.SchoolTypeId, DbType.Int32);
+        p.Add("@BoardId", request.BoardId, DbType.Int32);
+        p.Add("@AffiliationNumber", request.AffiliationNumber, DbType.AnsiString, size: 50);
+        p.Add("@RegistrationNo", request.RegistrationNo, DbType.AnsiString, size: 50);
+        p.Add("@PanNumber", request.PanNumber, DbType.AnsiString, size: 10);
+        p.Add("@LogoPath", request.LogoPath, DbType.String, size: 500);
+        p.Add("@GroupType", request.GroupType, DbType.Byte);
+        p.Add("@EstablishedYear", request.EstablishedYear, DbType.Int16);
+        p.Add("@AddressLine1", request.AddressLine1, DbType.String, size: 250);
+        p.Add("@AddressLine2", request.AddressLine2, DbType.String, size: 250);
+        p.Add("@CityId", request.CityId, DbType.Int32);
+        p.Add("@DistrictId", request.DistrictId, DbType.Int32);
+        p.Add("@StateId", request.StateId, DbType.Int32);
+        p.Add("@Pincode", request.Pincode, DbType.AnsiString, size: 10);
+        p.Add("@PrincipalName", request.PrincipalName, DbType.String, size: 150);
+        p.Add("@PrincipalMobile", request.PrincipalMobile, DbType.AnsiString, size: 15);
+        p.Add("@HrContactName", request.HrContactName, DbType.String, size: 150);
+        p.Add("@HrContactMobile", request.HrContactMobile, DbType.AnsiString, size: 15);
+        p.Add("@ContactEmail", request.ContactEmail, DbType.String, size: 150);
+        p.Add("@ContactMobile", request.ContactMobile, DbType.AnsiString, size: 15);
+        p.Add("@Website", request.Website, DbType.String, size: 255);
+        p.Add("@AboutSchool", request.AboutSchool, DbType.String, size: -1);
+
+        return QuerySingleAsync<SaveDraftProcResult>("USP_SaveSchoolRegistrationDraft", p, cancellationToken);
+    }
+
+    public async Task<long?> GetDraftIdAsync(long requestorUserId, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@RequestorUserId", requestorUserId, DbType.Int64);
+
+        var rows = await QueryAsync<long>("USP_GetSchoolRegistrationDraftId", p, cancellationToken)
+            .ConfigureAwait(false);
+
+        return rows.Count > 0 ? rows[0] : null;
+    }
+
+    public Task<ProcResult> SubmitDraftAsync(
+        long requestId,
+        long requestorUserId,
+        string? ipAddress,
+        CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@RequestId", requestId, DbType.Int64);
+        p.Add("@RequestorUserId", requestorUserId, DbType.Int64);
+        p.Add("@IpAddress", ipAddress, DbType.AnsiString, size: 45);
+
+        return QuerySingleAsync<ProcResult>("USP_SubmitRegistrationDraft", p, cancellationToken);
     }
 
     public Task<IReadOnlyList<CompletedApprovalRow>> GetCompletedForReconciliationAsync(

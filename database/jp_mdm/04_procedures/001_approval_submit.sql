@@ -66,6 +66,12 @@ CREATE OR ALTER PROCEDURE dbo.USP_SubmitApprovalRequest
     @BoardId            int            = NULL,
     @AffiliationNumber  varchar(50)    = NULL,
     @RegistrationNo     varchar(50)    = NULL,
+
+    -- Optional. See the column comment on t_mdm_school_registration_details:
+    -- blocking registration on a field an admin can chase later costs more
+    -- sign-ups than it saves effort.
+    @PanNumber          varchar(10)    = NULL,
+
     @LogoPath           nvarchar(500)  = NULL,
     @GroupType          tinyint        = NULL,
     @EstablishedYear    smallint       = NULL,
@@ -224,13 +230,13 @@ BEGIN
             BEGIN
                 INSERT INTO dbo.t_mdm_school_registration_details
                     (RequestId, SchoolName, SchoolTypeId, BoardId, AffiliationNumber,
-                     RegistrationNo, LogoPath, GroupType, EstablishedYear,
+                     RegistrationNo, PanNumber, LogoPath, GroupType, EstablishedYear,
                      AddressLine1, AddressLine2, CityId, DistrictId, StateId, Pincode,
                      PrincipalName, PrincipalMobile, HrContactName, HrContactMobile,
                      ContactEmail, ContactMobile, Website, AboutSchool, CreatedBy)
                 VALUES
                     (@Id, @SchoolName, @SchoolTypeId, @BoardId, @AffiliationNumber,
-                     @RegistrationNo, @LogoPath, @GroupType, @EstablishedYear,
+                     @RegistrationNo, @PanNumber, @LogoPath, @GroupType, @EstablishedYear,
                      @AddressLine1, @AddressLine2, @CityId, @DistrictId, @StateId, @Pincode,
                      @PrincipalName, @PrincipalMobile, @HrContactName, @HrContactMobile,
                      @ContactEmail, @ContactMobile, @Website, @AboutSchool, @RequestorUserId);

@@ -19,6 +19,7 @@ internal interface IProvisioningRepository
         Guid sourceRequestUid,
         Guid organizationUid,
         SchoolRegistrationDetailDto detail,
+        int planId,
         long actionByUserId,
         CancellationToken cancellationToken);
 
@@ -49,18 +50,28 @@ internal sealed class ProvisioningRepository : BaseRepository, IProvisioningRepo
     protected override JpDatabase Database => JpDatabase.App;
 
     /// <summary>
-    /// Creates the school an approved registration earned.
+    /// Creates the school an approved registration earned — and, in the same
+    /// transaction, its head-office branch and its subscription.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Idempotent on <paramref name="sourceRequestUid"/>: called twice, the
     /// second call returns the row the first created with
     /// Code = ALREADY_PROVISIONED and Status = 1. That is what makes a retry
     /// after a partial cross-database failure safe.
+    /// </para>
+    /// <para>
+    /// 🔴 THREE INSERTS, ONE GUARD. The branch and the subscription are inside
+    /// the same idempotency check as the school, not beside it — outside it, a
+    /// retry would skip the school it found and then create a SECOND head
+    /// office and a SECOND subscription, with nothing complaining at the time.
+    /// </para>
     /// </remarks>
     public Task<ProvisionResult> ProvisionSchoolAsync(
         Guid sourceRequestUid,
         Guid organizationUid,
         SchoolRegistrationDetailDto detail,
+        int planId,
         long actionByUserId,
         CancellationToken cancellationToken)
     {
@@ -74,6 +85,7 @@ internal sealed class ProvisioningRepository : BaseRepository, IProvisioningRepo
         p.Add("@BoardId", detail.BoardId, DbType.Int32);
         p.Add("@AffiliationNumber", detail.AffiliationNumber, DbType.AnsiString, size: 50);
         p.Add("@RegistrationNo", detail.RegistrationNo, DbType.AnsiString, size: 50);
+        p.Add("@PanNumber", detail.PanNumber, DbType.AnsiString, size: 10);
         p.Add("@LogoPath", detail.LogoPath, DbType.String, size: 500);
         p.Add("@GroupType", detail.GroupType, DbType.Byte);
         p.Add("@EstablishedYear", detail.EstablishedYear, DbType.Int16);
@@ -90,6 +102,11 @@ internal sealed class ProvisioningRepository : BaseRepository, IProvisioningRepo
         p.Add("@DistrictId", detail.DistrictId, DbType.Int32);
         p.Add("@StateId", detail.StateId, DbType.Int32);
         p.Add("@Pincode", detail.Pincode, DbType.AnsiString, size: 10);
+        // 🔴 Not optional. The procedure refuses a NULL plan, because a
+        // school provisioned without one is the "no subscription" state the
+        // whole design exists to prevent.
+        p.Add("@PlanId", planId, DbType.Int32);
+
         p.Add("@VerifiedByUserId", actionByUserId, DbType.Int64);
 
         return QuerySingleAsync<ProvisionResult>("USP_ProvisionSchoolFromApproval", p, cancellationToken);
