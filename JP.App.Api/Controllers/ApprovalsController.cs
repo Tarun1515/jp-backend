@@ -125,6 +125,73 @@ public sealed class ApprovalsController : ControllerBase
         return Ok(ApiResponse.Success("Your request has been resubmitted for review."));
     }
 
+    /// <summary>
+    /// Runs the cross-database work again for an approval that already
+    /// completed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 THE RECOVERY FOR A PARTIAL COMPLETION.
+    /// </para>
+    /// <para>
+    /// When <c>/action</c> returns <c>orchestrationCompleted = false</c>, the
+    /// approval is committed and the work after it is not. Before this existed
+    /// the only fix was a DBA calling <c>USP_ProvisionSchoolFromApproval</c> by
+    /// hand — a school that had paid and could not sign in, waiting on
+    /// somebody's database access.
+    /// </para>
+    /// <para>
+    /// Safe to call repeatedly: every step is idempotent, so a retry either
+    /// finishes the missing work or reports the same failure again. It does not
+    /// re-approve anything — the approval is untouched, and only its follow-on
+    /// effects are repeated.
+    /// </para>
+    /// <para>
+    /// Returns the same shape as <c>/action</c>, so a caller has one thing to
+    /// read in both places: <c>orchestrationCompleted</c>.
+    /// </para>
+    /// </remarks>
+    [HttpPost("{id:long}/retry-orchestration")]
+    [ProducesResponseType(typeof(Response<ProcessActionResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RetryOrchestration(long id, CancellationToken cancellationToken)
+    {
+        var result = await _approvals
+            .RetryOrchestrationAsync(id, User, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(result, result.Message));
+    }
+
+    /// <summary>
+    /// Approvals that completed but whose downstream work never did.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reconciliation report. An empty list is the healthy answer and the
+    /// expected one — this endpoint exists so that the unhealthy answer is
+    /// visible to an admin rather than only to whoever thinks to run a query.
+    /// </para>
+    /// <para>
+    /// ⚠️ Teacher verifications are excluded at the source. They provision
+    /// nothing by design (decision 2.9), so every approved one would appear
+    /// here for ever and bury the real orphans.
+    /// </para>
+    /// </remarks>
+    [HttpGet("orphaned")]
+    [ProducesResponseType(typeof(Response<IReadOnlyList<OrphanedApprovalDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> Orphaned(
+        [FromQuery] int sinceDays = 90,
+        CancellationToken cancellationToken = default)
+    {
+        var rows = await _approvals.GetOrphanedAsync(sinceDays, User, cancellationToken).ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(rows));
+    }
+
     /// <summary>Pending counts per request type, for the dashboard badges.</summary>
     [HttpGet("counts")]
     [ProducesResponseType(typeof(Response<IReadOnlyList<PendingCountDto>>), StatusCodes.Status200OK)]

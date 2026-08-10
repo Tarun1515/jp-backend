@@ -41,6 +41,19 @@ BEGIN
         */
         ActionByUserId      bigint            NOT NULL,
 
+        /*
+          Why it was rejected, as data rather than as prose.
+
+          The remarks say it in words for the school to read; this says it in a
+          way somebody can count. "How many registrations fail because the
+          authorisation letter is wrong" is a question the business will ask,
+          and grepping a free-text column is not an answer to it.
+
+          NULL for an approve — nothing was rejected — and for a rejection
+          recorded before this column existed.
+        */
+        RejectionReasonId   int               NULL,
+
         Remarks             nvarchar(1000)    NULL,
         -- Event timestamp: UTC datetime2 (decision 2.28).
         ActionOn            datetime2         NOT NULL CONSTRAINT DF_t_mdm_request_approvals_ActionOn DEFAULT (SYSUTCDATETIME()),
@@ -58,6 +71,8 @@ BEGIN
             FOREIGN KEY (RequestId) REFERENCES dbo.t_mdm_approval_requests (RequestId),
         CONSTRAINT FK_t_mdm_request_approvals_m_mdm_action_types
             FOREIGN KEY (ActionTypeId) REFERENCES dbo.m_mdm_action_types (ActionTypeId),
+        CONSTRAINT FK_t_mdm_request_approvals_m_mdm_rejection_reasons
+            FOREIGN KEY (RejectionReasonId) REFERENCES dbo.m_mdm_rejection_reasons (RejectionReasonId),
         CONSTRAINT CK_t_mdm_request_approvals_Is_Active  CHECK (Is_Active  IN (0, 1)),
         CONSTRAINT CK_t_mdm_request_approvals_Is_Deleted CHECK (Is_Deleted IN (0, 1))
     );
@@ -65,6 +80,36 @@ END
 ELSE
 BEGIN
     PRINT '    Table [t_mdm_request_approvals] already exists — skipped.';
+END
+GO
+/*------------------------------------------------------------------------------
+  RejectionReasonId, added in Phase 2E.
+
+  The column is in the CREATE above for a fresh database. This is the other
+  path: a database that already exists, where CREATE never runs again.
+
+  ⚠️ Both paths have to be here. A column that only appears in the CREATE is a
+  column every existing environment silently lacks, and the failure surfaces as
+  "invalid column name" from a procedure rather than from anything that names
+  the migration.
+------------------------------------------------------------------------------*/
+IF NOT EXISTS (SELECT 1 FROM sys.columns
+               WHERE Name = N'RejectionReasonId'
+                 AND Object_ID = OBJECT_ID(N'dbo.t_mdm_request_approvals'))
+BEGIN
+    PRINT '    Adding [RejectionReasonId] to [t_mdm_request_approvals] ...';
+
+    ALTER TABLE dbo.t_mdm_request_approvals ADD RejectionReasonId int NULL;
+END
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys
+               WHERE name = N'FK_t_mdm_request_approvals_m_mdm_rejection_reasons')
+BEGIN
+    PRINT '    Adding FK [FK_t_mdm_request_approvals_m_mdm_rejection_reasons] ...';
+
+    ALTER TABLE dbo.t_mdm_request_approvals
+        ADD CONSTRAINT FK_t_mdm_request_approvals_m_mdm_rejection_reasons
+            FOREIGN KEY (RejectionReasonId) REFERENCES dbo.m_mdm_rejection_reasons (RejectionReasonId);
 END
 GO
 /*------------------------------------------------------------------------------
@@ -83,6 +128,34 @@ BEGIN
 
     CREATE NONCLUSTERED INDEX IX_t_mdm_request_approvals_RequestId
         ON dbo.t_mdm_request_approvals (RequestId, ActionOn DESC)
-        INCLUDE (ActionTypeId, ActionByUserId, LevelNumber, Remarks);
+        INCLUDE (ActionTypeId, ActionByUserId, LevelNumber, Remarks, RejectionReasonId);
+END
+GO
+/*------------------------------------------------------------------------------
+  And the same for the index on an existing database: RejectionReasonId joined
+  the result set, so it has to join the INCLUDE or the index stops covering and
+  every trail read starts doing key lookups.
+
+  DROP_EXISTING rather than DROP then CREATE — the index is never absent, so a
+  read that lands mid-run does not fall back to a scan.
+------------------------------------------------------------------------------*/
+IF EXISTS (SELECT 1 FROM sys.indexes
+           WHERE name = N'IX_t_mdm_request_approvals_RequestId'
+             AND object_id = OBJECT_ID(N'dbo.t_mdm_request_approvals'))
+   AND NOT EXISTS (
+       SELECT 1
+       FROM sys.index_columns ic
+           INNER JOIN sys.indexes  i ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+           INNER JOIN sys.columns  c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+       WHERE i.name  = N'IX_t_mdm_request_approvals_RequestId'
+         AND i.object_id = OBJECT_ID(N'dbo.t_mdm_request_approvals')
+         AND c.name  = N'RejectionReasonId')
+BEGIN
+    PRINT '    Rebuilding index [IX_t_mdm_request_approvals_RequestId] to cover RejectionReasonId ...';
+
+    CREATE NONCLUSTERED INDEX IX_t_mdm_request_approvals_RequestId
+        ON dbo.t_mdm_request_approvals (RequestId, ActionOn DESC)
+        INCLUDE (ActionTypeId, ActionByUserId, LevelNumber, Remarks, RejectionReasonId)
+        WITH (DROP_EXISTING = ON);
 END
 GO

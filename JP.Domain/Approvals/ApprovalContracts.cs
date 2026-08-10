@@ -216,6 +216,19 @@ public sealed record RequestActionDto
     public string ActionTypeCode { get; init; } = string.Empty;
     public string ActionTypeName { get; init; } = string.Empty;
     public long ActionByUserId { get; init; }
+
+    /// <summary>
+    /// Set on a rejection or a resubmission request, null on an approve.
+    /// </summary>
+    /// <remarks>
+    /// Structured alongside <see cref="Remarks"/> rather than instead of it.
+    /// The remarks are what the school reads; this is what anybody counting
+    /// rejection causes reads, and free text is not countable.
+    /// </remarks>
+    public int? RejectionReasonId { get; init; }
+
+    public string? RejectionReasonName { get; init; }
+
     public string? Remarks { get; init; }
     public DateTime ActionOn { get; init; }
     public string? IpAddress { get; init; }
@@ -291,6 +304,46 @@ public sealed record PendingCountDto
     public string RequestTypeName { get; init; } = string.Empty;
     public int PendingCount { get; init; }
     public int OldestWaitingDays { get; init; }
+}
+
+/// <summary>
+/// An approval that completed but whose cross-database work did not.
+/// </summary>
+/// <remarks>
+/// <para>
+/// 🔴 This is the shape of a partial failure: the approval is committed in
+/// jp_mdm, the user may well be Active in jp_sso, and jp_app has no school. The
+/// person it belongs to can sign in and lands on nothing.
+/// </para>
+/// <para>
+/// <see cref="RequestId"/> is here so the admin screen can offer a retry rather
+/// than only reporting the problem. The reconciliation procedure in jp_app
+/// answers in terms of <see cref="RequestUid"/> — it is the only key that
+/// crosses the database boundary — and the API pairs it back up with the
+/// jp_mdm row it came from.
+/// </para>
+/// </remarks>
+public sealed record OrphanedApprovalDto
+{
+    public long RequestId { get; init; }
+    public Guid RequestUid { get; init; }
+    public string RequestNo { get; init; } = string.Empty;
+    public int RequestTypeId { get; init; }
+    public string RequestTypeName { get; init; } = string.Empty;
+    public Guid? OrganizationUid { get; init; }
+    public long RequestorUserId { get; init; }
+    public string? EntityName { get; init; }
+    public DateTime CompletedOn { get; init; }
+    public int HoursSinceCompleted { get; init; }
+
+    /// <summary>
+    /// Why this request is on the list, in words an admin can act on.
+    /// </summary>
+    /// <remarks>
+    /// Composed server-side so every surface says the same thing, and so the
+    /// screen never has to infer a cause from a count.
+    /// </remarks>
+    public string Reason { get; init; } = string.Empty;
 }
 
 public sealed record VerifyDocumentRequest

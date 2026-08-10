@@ -1,3 +1,4 @@
+using Dapper;
 using JP.Infrastructure.Data;
 using JP.Infrastructure.Email;
 using JP.Infrastructure.Middleware;
@@ -32,6 +33,18 @@ public static class DependencyInjection
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
+
+        /*
+          🔴 BEFORE ANY REPOSITORY RUNS.
+
+          Dapper cannot turn the DateTime a `date` column yields into a
+          DateOnly on its own, and decision 2.28 puts DateOnly on every calendar
+          date. Without these two handlers, reading a date of birth throws
+          AFTER the row was written — the caller sees a failure for something
+          that succeeded. See DateOnlyTypeHandler.
+        */
+        SqlMapper.AddTypeHandler(new DateOnlyTypeHandler());
+        SqlMapper.AddTypeHandler(new TimeOnlyTypeHandler());
 
         services.AddOptions<DatabaseOptions>()
             .Bind(configuration.GetSection(DatabaseOptions.SectionName))

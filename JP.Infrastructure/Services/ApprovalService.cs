@@ -23,6 +23,10 @@ public interface IApprovalService
     Task<long> ResubmitAsync(long requestId, ResubmitRequest request, ClaimsPrincipal caller, string? ipAddress, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<PendingCountDto>> GetPendingCountsAsync(ClaimsPrincipal caller, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<OrphanedApprovalDto>> GetOrphanedAsync(int sinceDays, ClaimsPrincipal caller, CancellationToken cancellationToken);
+
+    Task<ProcessActionResponse> RetryOrchestrationAsync(long requestId, ClaimsPrincipal caller, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -40,16 +44,22 @@ internal sealed class ApprovalService : IApprovalService
     private const int ActionApprove = 1;
     private const int ActionReject = 2;
 
+    /// <summary>m_mdm_approval_status. Approved.</summary>
+    private const int StatusApproved = 3;
+
     private readonly IApprovalRepository _repository;
+    private readonly IProvisioningRepository _provisioning;
     private readonly IApprovalOrchestrationService _orchestration;
     private readonly ILogger<ApprovalService> _logger;
 
     public ApprovalService(
         IApprovalRepository repository,
+        IProvisioningRepository provisioning,
         IApprovalOrchestrationService orchestration,
         ILogger<ApprovalService> logger)
     {
         _repository = repository;
+        _provisioning = provisioning;
         _orchestration = orchestration;
         _logger = logger;
     }
@@ -165,6 +175,7 @@ internal sealed class ApprovalService : IApprovalService
             request.ActionTypeId,
             actionByUserId,
             request.RowVersion,
+            request.RejectionReasonId,
             request.Remarks,
             ipAddress,
 
@@ -175,6 +186,24 @@ internal sealed class ApprovalService : IApprovalService
 
         result.EnsureSuccess();
 
+        /*
+          🔴 COMPLETED IS NOT THE SAME AS APPROVED.
+
+          A rejection also completes a request — it is finished, it just
+          finished badly — and an earlier version orchestrated on IsCompleted
+          alone. That meant REJECTING a school registration activated the
+          account and created the school: the exact outcome the rejection
+          existed to prevent, with nothing on any screen to show it had
+          happened.
+
+          Found in Phase 2E, by rejecting a request in the admin UI and then
+          finding the school sitting in jp_app.
+
+          So the gate is the resulting STATUS, not whether the request stopped
+          moving. Nothing downstream runs unless the answer was yes.
+        */
+        var hasDownstreamWork = result.IsCompleted && result.NewStatusId == StatusApproved;
+
         var response = new ProcessActionResponse
         {
             RequestId = requestId,
@@ -183,11 +212,20 @@ internal sealed class ApprovalService : IApprovalService
             IsCompleted = result.IsCompleted,
             Message = result.Message,
 
-            // Nothing to orchestrate unless the action finished the request.
-            OrchestrationCompleted = !result.IsCompleted,
+            /*
+              Reads as "nothing is left undone", which is what every caller
+              actually branches on.
+
+              A rejection and a level advance both have no downstream work, so
+              both are true here. Reporting false for them would light up the
+              partial-completion warning on a screen where nothing is wrong —
+              and a warning that cries wolf is a warning that gets dismissed on
+              the day it is real.
+            */
+            OrchestrationCompleted = !hasDownstreamWork,
         };
 
-        if (!result.IsCompleted)
+        if (!hasDownstreamWork)
         {
             return response;
         }
@@ -263,6 +301,181 @@ internal sealed class ApprovalService : IApprovalService
             : (Guid?)caller.RequireOrganizationUid();
 
         return _repository.GetPendingCountsAsync(scope, cancellationToken);
+    }
+
+    /// <summary>
+    /// Approvals that completed but never provisioned.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 Runs the reconciliation across two databases without joining them.
+    /// jp_mdm answers what SHOULD have been provisioned, jp_app answers what
+    /// was, and the pairing happens here — which is the same shape as the
+    /// orchestration itself, for the same reason (decision 2.2).
+    /// </para>
+    /// <para>
+    /// Admin only. This is an operational report about a failure, not
+    /// something a school should read about its own registration; the school's
+    /// answer to "did my approval work" is its own account, and if that is
+    /// broken it needs a person, not a report.
+    /// </para>
+    /// </remarks>
+    public async Task<IReadOnlyList<OrphanedApprovalDto>> GetOrphanedAsync(
+        int sinceDays,
+        ClaimsPrincipal caller,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        if (caller.GetUserType() != UserType.Admin)
+        {
+            throw new ForbiddenException("You do not have permission to view the reconciliation report.");
+        }
+
+        var completed = await _repository
+            .GetCompletedForReconciliationAsync(sinceDays, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (completed.Count == 0)
+        {
+            return [];
+        }
+
+        var orphaned = await _provisioning
+            .FindOrphanedAsync(
+                completed
+                    .Select(c => (c.RequestUid, c.RequestNo, c.OrganizationUid, c.CompletedOn))
+                    .ToList(),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (orphaned.Count == 0)
+        {
+            return [];
+        }
+
+        // RequestUid is the only key that crossed the boundary, so it is the
+        // only key that can bring the answer back.
+        var byUid = completed.ToDictionary(c => c.RequestUid);
+
+        var result = new List<OrphanedApprovalDto>(orphaned.Count);
+
+        foreach (var row in orphaned)
+        {
+            if (!byUid.TryGetValue(row.RequestUid, out var source))
+            {
+                // jp_app answered about a request jp_mdm did not send. Not
+                // possible today, and worth a line in the log rather than a
+                // silent skip if it ever becomes possible.
+                _logger.LogWarning(
+                    "Reconciliation returned request {RequestUid}, which was not in the list sent to jp_app.",
+                    row.RequestUid);
+                continue;
+            }
+
+            result.Add(new OrphanedApprovalDto
+            {
+                RequestId = source.RequestId,
+                RequestUid = source.RequestUid,
+                RequestNo = source.RequestNo,
+                RequestTypeId = source.RequestTypeId,
+                RequestTypeName = source.RequestTypeName,
+                OrganizationUid = source.OrganizationUid,
+                RequestorUserId = source.RequestorUserId,
+                EntityName = source.EntityName,
+                CompletedOn = row.CompletedOn,
+                HoursSinceCompleted = row.HoursSinceCompleted,
+                Reason =
+                    "Approved, but no school record was ever created. The account may be active with nothing " +
+                    "behind it — signing in would show an empty workspace.",
+            });
+        }
+
+        if (result.Count > 0)
+        {
+            _logger.LogWarning(
+                "Reconciliation found {Count} completed approval(s) with no school. Oldest completed {Hours}h ago.",
+                result.Count,
+                result.Max(r => r.HoursSinceCompleted));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Runs the cross-database work again for an approval that already
+    /// completed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 THE FIX FOR A PARTIAL COMPLETION, AND THE REASON IT IS SAFE.
+    /// </para>
+    /// <para>
+    /// Every step of the orchestration is idempotent: provisioning keys on
+    /// SourceRequestUid, and activation treats an already-Active user as
+    /// success rather than a rule violation. That second part is what makes
+    /// this endpoint work at all — before it, a retry stopped at step 1
+    /// reporting "already active" and never reached the provisioning that was
+    /// the entire reason for retrying.
+    /// </para>
+    /// <para>
+    /// This does NOT re-run the approval. The approval is committed and is not
+    /// touched here: no action row, no status change, no RowVersion bump. Only
+    /// the work that follows it is repeated, which is why there is no
+    /// concurrency parameter — there is nothing here for two admins to
+    /// overwrite. Both pressing retry means the work runs twice and converges,
+    /// which is exactly what idempotent means.
+    /// </para>
+    /// </remarks>
+    public async Task<ProcessActionResponse> RetryOrchestrationAsync(
+        long requestId,
+        ClaimsPrincipal caller,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        var detail = await _repository.GetByIdAsync(requestId, cancellationToken).ConfigureAwait(false)
+            ?? throw new NotFoundException("That request was not found.");
+
+        // Same gate as actioning it. Retrying provisioning IS the approval's
+        // effect, so it cannot need less permission than the approval did.
+        EnsureCanAct(detail.Header, caller);
+
+        /*
+          🔴 APPROVED ONLY.
+
+          A Pending request has nothing to retry — its orchestration has not
+          run and should not, because the decision has not been made. A
+          Rejected one provisions nothing by definition. Allowing either would
+          turn this into a way to provision a school that was never approved.
+        */
+        if (detail.Header.StatusId != StatusApproved)
+        {
+            throw new BusinessRuleException(
+                $"Only an approved request can be retried. This one is {detail.Header.StatusName.ToLowerInvariant()}.");
+        }
+
+        var actionByUserId = caller.GetUserId();
+
+        _logger.LogInformation(
+            "Retrying orchestration for approval {RequestNo} (RequestId {RequestId}), requested by user {UserId}.",
+            detail.Header.RequestNo, requestId, actionByUserId);
+
+        var outcome = await _orchestration.RunAsync(detail, actionByUserId, cancellationToken)
+            .ConfigureAwait(false);
+
+        return new ProcessActionResponse
+        {
+            RequestId = requestId,
+            NewStatusId = detail.Header.StatusId,
+            CurrentApprovalLevel = detail.Header.CurrentApprovalLevel,
+            IsCompleted = true,
+            OrchestrationCompleted = outcome.Succeeded,
+            OrchestrationError = outcome.Error,
+            Message = outcome.Succeeded
+                ? "The outstanding work for this approval has now completed."
+                : outcome.Error ?? "The retry did not complete.",
+        };
     }
 
     /// <summary>

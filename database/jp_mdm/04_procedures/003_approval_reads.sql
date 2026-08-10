@@ -51,10 +51,28 @@ CREATE OR ALTER PROCEDURE dbo.USP_GetApprovalRequestList
     @FromDate           date             = NULL,   -- IST calendar date
     @ToDate             date             = NULL,   -- IST calendar date, inclusive
     @PageNumber         int              = 1,
-    @PageSize           int              = 20
+    @PageSize           int              = 20,
+
+    /*
+      Sorting. Optional, and NULL means the queue's own order.
+
+      🔴 A CASE, not dynamic SQL. @SortBy arrives from a query string and is
+      only ever COMPARED here — it never becomes part of a statement, so an
+      unrecognised value sorts by the default rather than doing anything.
+
+      Only five columns are sortable, and that is the whole list: a work queue
+      whose order can be rearranged twelve ways is a report, and a report is
+      what somebody browses instead of clearing.
+    */
+    @SortBy             varchar(30)      = NULL,
+    @SortDirection      varchar(4)       = 'ASC'
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    SET @SortBy = NULLIF(LTRIM(RTRIM(@SortBy)), '');
+    SET @SortDirection = CASE WHEN UPPER(ISNULL(@SortDirection, 'ASC')) = 'DESC'
+                              THEN 'DESC' ELSE 'ASC' END;
 
     SET @PageNumber = CASE WHEN ISNULL(@PageNumber, 1) < 1 THEN 1 ELSE @PageNumber END;
     SET @PageSize   = CASE WHEN ISNULL(@PageSize, 20) < 1 THEN 20
@@ -118,7 +136,39 @@ BEGIN
            OR r.RequestNo LIKE @SearchPattern
            OR sd.SchoolName LIKE @SearchPattern
            OR td.FullName   LIKE @SearchPattern)
-    ORDER BY r.SubmittedOn ASC, r.RequestId ASC   -- oldest first: it is a queue
+    /*
+      The chosen column first, then ALWAYS the queue's own order underneath.
+
+      Two requests submitted in the same second under a name sort would
+      otherwise come back in whatever order the engine felt like, and a row
+      that moves between pages on a refresh is a row somebody misses. The
+      RequestId tiebreak makes the paging deterministic.
+
+      ⚠️ WaitingDays sorts by SubmittedOn INVERTED, because they run opposite
+      ways: the longest wait is the earliest submission. Sorting "Waiting"
+      descending has to put the oldest request on top, which is what the person
+      clicking it means.
+    */
+    ORDER BY
+        CASE WHEN @SortDirection = 'ASC'  AND @SortBy = 'requestNo'    THEN r.RequestNo END ASC,
+        CASE WHEN @SortDirection = 'DESC' AND @SortBy = 'requestNo'    THEN r.RequestNo END DESC,
+
+        CASE WHEN @SortDirection = 'ASC'  AND @SortBy = 'entityName'
+             THEN COALESCE(sd.SchoolName, td.FullName) END ASC,
+        CASE WHEN @SortDirection = 'DESC' AND @SortBy = 'entityName'
+             THEN COALESCE(sd.SchoolName, td.FullName) END DESC,
+
+        CASE WHEN @SortDirection = 'ASC'  AND @SortBy = 'statusName'   THEN st.Name END ASC,
+        CASE WHEN @SortDirection = 'DESC' AND @SortBy = 'statusName'   THEN st.Name END DESC,
+
+        CASE WHEN @SortDirection = 'ASC'  AND @SortBy = 'submittedOn'  THEN r.SubmittedOn END ASC,
+        CASE WHEN @SortDirection = 'DESC' AND @SortBy = 'submittedOn'  THEN r.SubmittedOn END DESC,
+
+        -- inverted on purpose — see the note above
+        CASE WHEN @SortDirection = 'ASC'  AND @SortBy = 'waitingDays'  THEN r.SubmittedOn END DESC,
+        CASE WHEN @SortDirection = 'DESC' AND @SortBy = 'waitingDays'  THEN r.SubmittedOn END ASC,
+
+        r.SubmittedOn ASC, r.RequestId ASC   -- oldest first: it is a queue
     OFFSET (@PageNumber - 1) * @PageSize ROWS
     FETCH NEXT @PageSize ROWS ONLY
     OPTION (RECOMPILE);
@@ -175,10 +225,24 @@ BEGIN
         r.CurrentApprovalLevel, r.EntityUid, r.OrganizationUid,
         r.RequestorUserId, r.ApproverUserId,
         r.SubmittedOn, r.CompletedOn, r.RowVersion,
+
+        /*
+          ⚠️ The same COALESCE the list procedure uses, and for the same
+          reason: the header is the SAME shape on both, and the detail screen
+          titles itself from EntityName.
+
+          It was missing here until Phase 2E, which showed up as a request
+          detail headed "School registration" instead of the school's name.
+          Two procedures returning one contract have to agree on all of it.
+        */
+        COALESCE(sd.SchoolName, td.FullName) AS EntityName,
+
         DATEDIFF(DAY, r.SubmittedOn, SYSUTCDATETIME()) AS WaitingDays
     FROM dbo.t_mdm_approval_requests r
         INNER JOIN dbo.m_mdm_request_types   rt ON rt.RequestTypeId    = r.RequestTypeId
         INNER JOIN dbo.m_mdm_approval_status st ON st.ApprovalStatusId = r.StatusId
+        LEFT  JOIN dbo.t_mdm_school_registration_details  sd ON sd.RequestId = r.RequestId AND sd.Is_Deleted = 0
+        LEFT  JOIN dbo.t_mdm_teacher_registration_details td ON td.RequestId = r.RequestId AND td.Is_Deleted = 0
     WHERE r.RequestId = @RequestId AND r.Is_Deleted = 0;
 
     -- ---- 2. typed detail --------------------------------------------------
@@ -214,9 +278,11 @@ BEGIN
     SELECT
         a.ApprovalId, a.RequestId, a.LevelNumber,
         a.ActionTypeId, at.Code AS ActionTypeCode, at.Name AS ActionTypeName,
-        a.ActionByUserId, a.Remarks, a.ActionOn, a.IpAddress
+        a.ActionByUserId, a.RejectionReasonId, rr.Name AS RejectionReasonName,
+        a.Remarks, a.ActionOn, a.IpAddress
     FROM dbo.t_mdm_request_approvals a
         INNER JOIN dbo.m_mdm_action_types at ON at.ActionTypeId = a.ActionTypeId
+        LEFT  JOIN dbo.m_mdm_rejection_reasons rr ON rr.RejectionReasonId = a.RejectionReasonId
     WHERE a.RequestId = @RequestId AND a.Is_Deleted = 0
     ORDER BY a.ActionOn DESC, a.ApprovalId DESC;
 

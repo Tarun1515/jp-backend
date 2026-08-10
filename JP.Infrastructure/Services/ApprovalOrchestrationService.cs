@@ -83,6 +83,9 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
     // m_sso_user_status. Active.
     private const int UserStatusActive = 2;
 
+    // m_mdm_approval_status. Approved — the only status that provisions anything.
+    private const int StatusApproved = 3;
+
     private readonly IUserRepository _users;
     private readonly IProvisioningRepository _provisioning;
     private readonly IEmailDispatchQueue _emailQueue;
@@ -106,6 +109,31 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(detail);
+
+        /*
+          🔴 SECOND GATE, ON PURPOSE.
+
+          The caller already checks this. It is repeated here because the cost
+          of getting it wrong is not an error message — it is a school that was
+          REJECTED being created and activated anyway, silently, with the
+          rejection sitting in the trail next to it.
+
+          That happened: an earlier version orchestrated whenever the request
+          was "completed", and a rejection completes a request. Two gates
+          because one of them was already missed once, and because every future
+          caller of this method inherits the check rather than having to
+          remember it.
+        */
+        if (detail.Header.StatusId != StatusApproved)
+        {
+            _logger.LogError(
+                "Orchestration was asked to run for approval {RequestNo} (RequestId {RequestId}), which is " +
+                "{Status}, not approved. Nothing was provisioned.",
+                detail.Header.RequestNo, detail.Header.RequestId, detail.Header.StatusName);
+
+            return OrchestrationOutcome.Fail(
+                "Nothing was provisioned: this request was not approved.");
+        }
 
         return detail.Header.RequestTypeId switch
         {

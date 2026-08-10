@@ -17,11 +17,21 @@ internal interface IApprovalRepository
 
     Task<ApprovalRequestDetailDto?> GetByIdAsync(long requestId, CancellationToken cancellationToken);
 
-    Task<ProcessActionProcResult> ProcessActionAsync(long requestId, int actionTypeId, long actionByUserId, int rowVersion, string? remarks, string? ipAddress, string? actorRoleIds, CancellationToken cancellationToken);
+    Task<ProcessActionProcResult> ProcessActionAsync(long requestId, int actionTypeId, long actionByUserId, int rowVersion, int? rejectionReasonId, string? remarks, string? ipAddress, string? actorRoleIds, CancellationToken cancellationToken);
 
     Task<ProcResult> ResubmitAsync(long requestId, long actionByUserId, string? remarks, int rowVersion, string? ipAddress, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<PendingCountDto>> GetPendingCountsAsync(Guid? organizationUid, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Approvals that completed and were meant to provision something.
+    /// </summary>
+    /// <remarks>
+    /// Half of the reconciliation: this side knows what SHOULD exist, jp_app
+    /// knows what does. Neither can join to the other (decision 2.2), so the
+    /// service carries the list across.
+    /// </remarks>
+    Task<IReadOnlyList<CompletedApprovalRow>> GetCompletedForReconciliationAsync(int sinceDays, CancellationToken cancellationToken);
 
     Task<ProcResult> SaveDocumentAsync(long requestId, int documentTypeId, string filePath, string fileName, int fileSizeKb, string mimeType, long actionByUserId, CancellationToken cancellationToken);
 
@@ -147,6 +157,13 @@ internal sealed class ApprovalRepository : BaseRepository, IApprovalRepository
         p.Add("@PageNumber", filter.PageNumber, DbType.Int32);
         p.Add("@PageSize", filter.PageSize, DbType.Int32);
 
+        // Passed straight through. The procedure compares these against a
+        // fixed list and falls back to the queue's own order for anything it
+        // does not recognise — there is no second whitelist here to drift out
+        // of step with that one.
+        p.Add("@SortBy", filter.SortBy, DbType.AnsiString, size: 30);
+        p.Add("@SortDirection", filter.SortDirection, DbType.AnsiString, size: 4);
+
         return QueryMultipleAsync<(IReadOnlyList<ApprovalRequestRow>, long)>(
             "USP_GetApprovalRequestList",
             async grid =>
@@ -211,6 +228,7 @@ internal sealed class ApprovalRepository : BaseRepository, IApprovalRepository
         int actionTypeId,
         long actionByUserId,
         int rowVersion,
+        int? rejectionReasonId,
         string? remarks,
         string? ipAddress,
         string? actorRoleIds,
@@ -221,6 +239,11 @@ internal sealed class ApprovalRepository : BaseRepository, IApprovalRepository
         p.Add("@ActionTypeId", actionTypeId, DbType.Int32);
         p.Add("@ActionByUserId", actionByUserId, DbType.Int64);
         p.Add("@RowVersion", rowVersion, DbType.Int32);
+
+        // The procedure drops this for an approve. Sent regardless rather than
+        // conditionally, so there is one rule about it and it lives in one place.
+        p.Add("@RejectionReasonId", rejectionReasonId, DbType.Int32);
+
         p.Add("@Remarks", remarks, DbType.String, size: 1000);
         p.Add("@IpAddress", ipAddress, DbType.AnsiString, size: 45);
         p.Add("@ActorRoleIds", actorRoleIds, DbType.AnsiString, size: 200);
@@ -254,6 +277,17 @@ internal sealed class ApprovalRepository : BaseRepository, IApprovalRepository
         p.Add("@OrganizationUid", organizationUid, DbType.Guid);
 
         return QueryAsync<PendingCountDto>("USP_GetPendingCountsByType", p, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<CompletedApprovalRow>> GetCompletedForReconciliationAsync(
+        int sinceDays,
+        CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@SinceDays", sinceDays, DbType.Int32);
+
+        return QueryAsync<CompletedApprovalRow>(
+            "USP_GetCompletedApprovalsForReconciliation", p, cancellationToken);
     }
 
     public Task<ProcResult> SaveDocumentAsync(

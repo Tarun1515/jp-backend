@@ -108,17 +108,47 @@ internal sealed class DocumentAccessRow
 }
 
 /// <summary>
-/// One row of the reconciliation report — an approval that completed in jp_mdm
-/// but whose downstream effect is missing.
+/// A completed approval that was SUPPOSED to create something in another
+/// database — read from jp_mdm, then offered to jp_app to check.
 /// </summary>
-internal sealed class OrphanedApprovalRow
+/// <remarks>
+/// ⚠️ Only request types that provision something appear here. The procedure
+/// filters out teacher verification, which by design creates nothing (2.9);
+/// including it would mark every approved teacher request as an orphan for
+/// ever, and a report that is permanently wrong is a report nobody opens.
+/// </remarks>
+internal sealed class CompletedApprovalRow
 {
     public long RequestId { get; set; }
+    public Guid RequestUid { get; set; }
     public string RequestNo { get; set; } = string.Empty;
     public int RequestTypeId { get; set; }
+    public string RequestTypeName { get; set; } = string.Empty;
     public Guid EntityUid { get; set; }
     public Guid? OrganizationUid { get; set; }
     public long RequestorUserId { get; set; }
+    public DateTime CompletedOn { get; set; }
+    public string? EntityName { get; set; }
+}
+
+/// <summary>
+/// One row of the reconciliation answer, as jp_app returns it.
+/// </summary>
+/// <remarks>
+/// 🔴 Deliberately narrow. jp_app knows nothing about an approval beyond the
+/// four columns it was handed, so this carries the RequestUid back and nothing
+/// more — the caller pairs it with the <see cref="CompletedApprovalRow"/> it
+/// sent to recover the request id, type and name.
+///
+/// Widening this to look like the jp_mdm row would be a lie about where the
+/// data came from, and the first person to add a column here would go looking
+/// for it in a database that does not have it.
+/// </remarks>
+internal sealed class OrphanedApprovalRow
+{
+    public Guid RequestUid { get; set; }
+    public string RequestNo { get; set; } = string.Empty;
+    public Guid? OrganizationUid { get; set; }
     public DateTime CompletedOn { get; set; }
     public int HoursSinceCompleted { get; set; }
 }

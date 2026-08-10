@@ -230,6 +230,19 @@ GO
   A master not listed here returns an empty set. Adding one is a deliberate
   edit, which is the point: the list of what an anonymous caller can enumerate
   should be visible in one place.
+
+  ---------------------------------------------------------------------------
+  ⚠️ THE KEY IS NORMALISED, BECAUSE A URL AND A CODE SPELL THINGS DIFFERENTLY
+  ---------------------------------------------------------------------------
+  The branch names below are SQL-ish: SCHOOL_TYPE, CLASS_LEVEL. The client
+  sends a URL segment, which is kebab: /api/masters/school-type. Uppercasing
+  alone turns that into SCHOOL-TYPE, which matches no branch and returns an
+  empty list — a dropdown that is silently and permanently blank, with a 200
+  and no error anywhere to explain it.
+
+  Found in Phase 2E: every multi-word master was returning nothing. Normalising
+  here rather than mapping in the API keeps decision 2.48's rule intact — one
+  gate, in the procedure, with no second list to drift out of step with it.
 ==============================================================================*/
 CREATE OR ALTER PROCEDURE dbo.USP_GetMaster
     @MasterCode varchar(50),
@@ -238,7 +251,7 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    SET @MasterCode = UPPER(LTRIM(RTRIM(@MasterCode)));
+    SET @MasterCode = UPPER(REPLACE(LTRIM(RTRIM(@MasterCode)), '-', '_'));
 
     IF @MasterCode = 'COUNTRY'
         SELECT CountryId AS Id, Code, Name, DisplayOrder FROM dbo.m_mdm_country

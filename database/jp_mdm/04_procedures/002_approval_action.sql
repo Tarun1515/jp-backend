@@ -34,6 +34,16 @@ CREATE OR ALTER PROCEDURE dbo.USP_ProcessApprovalAction
     @ActionByUserId     bigint,
     @RowVersion         int,            -- required: this is the concurrency check
     @Remarks            nvarchar(1000) = NULL,
+
+    /*
+      Why, as data. Required by the API for a reject, and deliberately dropped
+      for an approve — nothing was rejected, so there is no reason to record.
+
+      The remarks say it in words for the school to read; this says it in a way
+      somebody can count.
+    */
+    @RejectionReasonId  int            = NULL,
+
     @IpAddress          varchar(45)    = NULL,
 
     /*
@@ -198,9 +208,14 @@ BEGIN
 
             -- Append to the trail. Never an UPDATE — this is the evidence.
             INSERT INTO dbo.t_mdm_request_approvals
-                (RequestId, LevelNumber, ActionTypeId, ActionByUserId, Remarks, ActionOn, IpAddress, CreatedBy)
+                (RequestId, LevelNumber, ActionTypeId, ActionByUserId, RejectionReasonId,
+                 Remarks, ActionOn, IpAddress, CreatedBy)
             VALUES
-                (@RequestId, @CurrentLevel, @ActionTypeId, @ActionByUserId, @Remarks, @Now, @IpAddress, @ActionByUserId);
+                (@RequestId, @CurrentLevel, @ActionTypeId, @ActionByUserId,
+                 -- Only a rejection carries a reason. An approve that arrived with
+                 -- one, stored anyway, would read later as a rejection.
+                 CASE WHEN @ActionTypeId = @AC_APPROVE THEN NULL ELSE @RejectionReasonId END,
+                 @Remarks, @Now, @IpAddress, @ActionByUserId);
 
             COMMIT TRANSACTION;
 

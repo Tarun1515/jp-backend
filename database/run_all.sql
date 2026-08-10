@@ -241,6 +241,7 @@ GO
 :r $(DbRoot)\jp_mdm\04_procedures\003_approval_reads.sql
 :r $(DbRoot)\jp_mdm\04_procedures\004_documents_masters.sql
 :r $(DbRoot)\jp_mdm\04_procedures\005_document_lookup.sql
+:r $(DbRoot)\jp_mdm\04_procedures\006_reconciliation.sql
 
 
 /*==============================================================================
