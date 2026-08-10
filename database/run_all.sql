@@ -266,6 +266,30 @@ GO
 :r $(DbRoot)\jp_app\01_tables\003_t_app_school_branches.sql
 :r $(DbRoot)\jp_app\01_tables\004_t_app_subscriptions.sql
 
+-- PHASE 3A — the deferred columns on the two tables 2D and 2F pulled forward.
+-- The CREATE scripts above are NOT edited (Block D of _TEMPLATE_table.sql):
+-- editing them would erase the record of what was pulled forward and why.
+:r $(DbRoot)\jp_app\01_tables\005_alter_t_app_schools_suspension.sql
+:r $(DbRoot)\jp_app\01_tables\006_alter_t_app_school_branches_deferred.sql
+
+-- PHASE 3A — school side. Photos and facilities reference branches, so they
+-- come after 003.
+:r $(DbRoot)\jp_app\01_tables\007_t_app_school_photos.sql
+:r $(DbRoot)\jp_app\01_tables\008_t_app_school_facilities.sql
+:r $(DbRoot)\jp_app\01_tables\009_t_app_school_users.sql
+:r $(DbRoot)\jp_app\01_tables\010_t_app_school_user_branches.sql
+
+-- PHASE 3A — teacher side. The header first: every table below it has a
+-- foreign key to t_app_teachers, so dependency order is not optional here.
+:r $(DbRoot)\jp_app\01_tables\011_t_app_teachers.sql
+:r $(DbRoot)\jp_app\01_tables\012_t_app_teacher_subjects.sql
+:r $(DbRoot)\jp_app\01_tables\013_t_app_teacher_class_levels.sql
+:r $(DbRoot)\jp_app\01_tables\014_t_app_teacher_skills.sql
+:r $(DbRoot)\jp_app\01_tables\015_t_app_teacher_languages.sql
+:r $(DbRoot)\jp_app\01_tables\016_t_app_teacher_preferred_locations.sql
+:r $(DbRoot)\jp_app\01_tables\017_t_app_teacher_documents.sql
+:r $(DbRoot)\jp_app\01_tables\018_t_app_teacher_experiences.sql
+
 PRINT '  Functions and procedures ...';
 GO
 :r $(DbRoot)\jp_app\04_procedures\000_USP_LogError.sql
