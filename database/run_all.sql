@@ -231,6 +231,7 @@ GO
 :r $(DbRoot)\jp_mdm\03_seed\006_seed_provisional_masters.sql
 :r $(DbRoot)\jp_mdm\03_seed\007_seed_provisional_documents.sql
 :r $(DbRoot)\jp_mdm\03_seed\008_seed_plans.sql
+:r $(DbRoot)\jp_mdm\03_seed\009_seed_languages.sql
 
 -- ---- programmability: IST functions first, then USP_LogError which every
 -- ---- other procedure calls from its CATCH block, then the approval engine.
@@ -289,6 +290,15 @@ GO
 :r $(DbRoot)\jp_app\01_tables\016_t_app_teacher_preferred_locations.sql
 :r $(DbRoot)\jp_app\01_tables\017_t_app_teacher_documents.sql
 :r $(DbRoot)\jp_app\01_tables\018_t_app_teacher_experiences.sql
+
+-- ---- seed / backfill --------------------------------------------------------
+-- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
+-- shapes the schema. It is listed here so a database rebuilt from scratch ends
+-- up in the same state, and it is safe to replay: a second pass reports
+-- 0 created in every category.
+PRINT '  Backfill ...';
+GO
+:r $(DbRoot)\jp_app\03_seed\001_backfill_phase3b.sql
 
 PRINT '  Functions and procedures ...';
 GO
