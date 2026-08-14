@@ -272,14 +272,19 @@ internal sealed class UserRepository : BaseRepository, IUserRepository
     // Administration
     // -----------------------------------------------------------------------
 
+    public Task<UserIdentityRow?> GetIdentityAsync(long userId, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@UserId", userId, DbType.Int64);
+
+        return QueryFirstOrDefaultAsync<UserIdentityRow>("USP_GetUserIdentity", p, cancellationToken);
+    }
+
     public async Task<UpdateStatusResult> UpdateUserStatusForApprovalAsync(
         long userId, int newStatusId, long actionByUserId, CancellationToken cancellationToken)
     {
-        var lookup = new DynamicParameters();
-        lookup.Add("@UserId", userId, DbType.Int64);
-
-        var identity = await QueryFirstOrDefaultAsync<UserIdentityRow>(
-            "USP_GetUserIdentity", lookup, cancellationToken).ConfigureAwait(false);
+        // One reader of USP_GetUserIdentity, not two.
+        var identity = await GetIdentityAsync(userId, cancellationToken).ConfigureAwait(false);
 
         if (identity is null)
         {

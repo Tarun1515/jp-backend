@@ -20,6 +20,7 @@ internal interface IProvisioningRepository
         Guid organizationUid,
         SchoolRegistrationDetailDto detail,
         int planId,
+        Guid? ownerUserUid,
         long actionByUserId,
         CancellationToken cancellationToken);
 
@@ -72,6 +73,7 @@ internal sealed class ProvisioningRepository : BaseRepository, IProvisioningRepo
         Guid organizationUid,
         SchoolRegistrationDetailDto detail,
         int planId,
+        Guid? ownerUserUid,
         long actionByUserId,
         CancellationToken cancellationToken)
     {
@@ -106,6 +108,16 @@ internal sealed class ProvisioningRepository : BaseRepository, IProvisioningRepo
         // school provisioned without one is the "no subscription" state the
         // whole design exists to prevent.
         p.Add("@PlanId", planId, DbType.Int32);
+
+        /*
+          🔴 The account that registered this school becomes its OWNER.
+
+          Without it t_app_school_users stays empty, and dbo.fn_VisibleBranches
+          reads that table — so every branch, job and applicant list would come
+          back empty for everybody, looking like a broken query rather than a
+          missing row (2.53).
+        */
+        p.Add("@OwnerUserUid", ownerUserUid, DbType.Guid);
 
         p.Add("@VerifiedByUserId", actionByUserId, DbType.Int64);
 

@@ -299,11 +299,25 @@ GO
 PRINT '  Backfill ...';
 GO
 :r $(DbRoot)\jp_app\03_seed\001_backfill_phase3b.sql
+-- PHASE 3C — the school owner rows nothing ever wrote (2.53).
+-- ⚠️ NOT run from here: it EXECs USP_ProvisionSchoolOwner, which is created in
+-- the 04_procedures section below. On a database built from scratch this line
+-- would fail on a procedure that does not exist yet.
+-- Run it by hand after a full rebuild:
+--   sqlcmd -S localhost\TARUN -E -I -i database\jp_app\03_seed\002_backfill_phase3c_owners.sql
+-- :r $(DbRoot)\jp_app\03_seed\002_backfill_phase3c_owners.sql
 
 PRINT '  Functions and procedures ...';
 GO
 :r $(DbRoot)\jp_app\04_procedures\000_USP_LogError.sql
 :r $(DbRoot)\jp_app\04_procedures\001_provisioning.sql
+
+-- PHASE 3C. The scope resolver first: everything below joins to it.
+:r $(DbRoot)\jp_app\04_procedures\002_provisioning_accounts.sql
+:r $(DbRoot)\jp_app\04_procedures\003_scope_resolver.sql
+:r $(DbRoot)\jp_app\04_procedures\004_school_profile.sql
+:r $(DbRoot)\jp_app\04_procedures\005_school_photos_facilities.sql
+:r $(DbRoot)\jp_app\04_procedures\006_branches.sql
 
 
 /*==============================================================================

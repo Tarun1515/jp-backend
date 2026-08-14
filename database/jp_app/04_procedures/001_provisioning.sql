@@ -68,6 +68,17 @@ CREATE OR ALTER PROCEDURE dbo.USP_ProvisionSchoolFromApproval
     @PanNumber          varchar(10)    = NULL,
 
     /*
+      🔴 The account that registered this school. It becomes the school's
+      OWNER, and without that row the scope resolver gives them nothing —
+      every branch, job and applicant list would be empty with no error.
+
+      Optional so an approval that predates this parameter still provisions;
+      the owner row is simply skipped and USP_ProvisionSchoolOwner can add it
+      afterwards.
+    */
+    @OwnerUserUid       uniqueidentifier = NULL,
+
+    /*
       🔴 The plan the new school starts on, resolved by the API.
 
       Plans live in m_mdm_plans, in jp_mdm. This procedure is in jp_app and
@@ -120,11 +131,11 @@ BEGIN
             BEGIN TRANSACTION;
 
             /*
-              🔴 THREE INSERTS, ONE GUARD, ONE TRANSACTION.
+              🔴 FOUR INSERTS, ONE GUARD, ONE TRANSACTION.
 
-              The school, its head-office branch and its subscription are all
-              created here — INSIDE the SourceRequestUid guard above, not
-              alongside it.
+              The school, its head-office branch, its subscription and its
+              owner membership are all created here — INSIDE the
+              SourceRequestUid guard above, not alongside it.
 
               Outside the guard, a retry after a partial failure would find the
               school already there, skip it, and then insert a SECOND head
@@ -174,13 +185,59 @@ BEGIN
               expire; StatusId 1 is Active.
 
               Keyed on the ORGANISATION, not the school: a group with several
-              schools under one organisation is on one plan, which is what the
-              one-active-per-owner index already asserts.
+              schools under one organisation is on one plan, which is what
+              UQ_t_app_subscriptions_OneActivePerOwner already asserts.
+
+              🔴 WHICH IS WHY THIS IS CONDITIONAL, AND WHY IT HAS ITS OWN CATCH.
+
+              A group registering its SECOND school reaches here with the
+              organisation already on a plan. An unconditional insert raises
+              2601 and — because the outer CATCH rolls back the whole
+              transaction — destroys the school and branch created moments
+              earlier. The registration form asks "one campus or several"
+              (2.50), so this is an ordinary path, not an edge case.
+
+              The nested TRY/CATCH covers the remaining race: two approvals for
+              one organisation committing at the same instant. The loser
+              swallows its own 2601 and keeps its school, because the
+              organisation ends up on exactly one plan either way — which is all
+              the index was ever asserting.
             */
-            INSERT INTO dbo.t_app_subscriptions
-                (OwnerUid, PlanId, StartsOn, EndsOn, StatusId, AutoRenew, CreatedBy)
-            VALUES
-                (@OrganizationUid, @PlanId, @Now, NULL, 1, 0, @VerifiedByUserId);
+            IF NOT EXISTS (SELECT 1 FROM dbo.t_app_subscriptions
+                           WHERE OwnerUid = @OrganizationUid AND StatusId = 1 AND Is_Deleted = 0)
+            BEGIN
+                BEGIN TRY
+                    INSERT INTO dbo.t_app_subscriptions
+                        (OwnerUid, PlanId, StartsOn, EndsOn, StatusId, AutoRenew, CreatedBy)
+                    VALUES
+                        (@OrganizationUid, @PlanId, @Now, NULL, 1, 0, @VerifiedByUserId);
+                END TRY
+                BEGIN CATCH
+                    -- Somebody else gave this organisation its plan first. That
+                    -- is the outcome we wanted; it is not a reason to lose a
+                    -- school.
+                    IF ERROR_NUMBER() NOT IN (2601, 2627) THROW;
+                END CATCH
+            END
+
+            /*
+              🔴 THE OWNER. The row nothing wrote until Phase 3C.
+
+              The person who registered the school works there, and is its
+              owner (RoleInSchool = 1). Every school-scoped query resolves
+              visibility through this table — with it empty, the resolver
+              returned nothing for everybody, which would have looked like a
+              broken query rather than a missing row.
+
+              ⚠️ No rows in t_app_school_user_branches, deliberately: an owner
+              sees every campus and the ABSENCE of link rows is what says so
+              (2.51). Enumerating them per branch would need a backfill on
+              every new campus.
+            */
+            IF @OwnerUserUid IS NOT NULL
+                INSERT INTO dbo.t_app_school_users
+                    (SchoolId, UserUid, RoleInSchool, DesignationText, CreatedBy)
+                VALUES (@Id, @OwnerUserUid, 1, NULL, @VerifiedByUserId);
 
             COMMIT TRANSACTION;
 
@@ -203,16 +260,39 @@ BEGIN
                  @ErrorMessage = @ErrMessage, @ParametersJson = @Params,
                  @ContextInfo = N'USP_ProvisionSchoolFromApproval', @CreatedBy = @VerifiedByUserId;
 
-            -- A duplicate here means a concurrent retry won the race. The
-            -- caller wanted the school to exist, and it does.
+            /*
+              🔴 A DUPLICATE KEY IS ONLY "ALREADY PROVISIONED" IF THE SCHOOL IS
+              ACTUALLY THERE.
+
+              This block used to assume it. Any 2601 in the transaction was read
+              as "a concurrent retry won the race" — but the duplicate can come
+              from the subscription or the head-office index instead, and the
+              rollback then removes the school this procedure had just created.
+              It returned Status = 1 anyway, so the orchestration logged
+              "school provisioned" for a school that did not exist.
+
+              That is the exact failure 2.48 exists to prevent, reached from
+              inside the procedure the decision is about. It was found by putting
+              a real registration through the real flow and then looking for the
+              row, which is the only reason it was found at all.
+
+              So: look first, and only claim success if the row answers.
+            */
             IF @ErrNumber IN (2601, 2627)
             BEGIN
                 SELECT @Id = SchoolId, @SchoolUid = SchoolUid
                 FROM dbo.t_app_schools
                 WHERE SourceRequestUid = @SourceRequestUid AND Is_Deleted = 0;
 
-                SELECT @Status = 1, @Code = 'ALREADY_PROVISIONED',
-                       @Message = N'This school was already created for that approval.';
+                IF @Id IS NOT NULL
+                    SELECT @Status = 1, @Code = 'ALREADY_PROVISIONED',
+                           @Message = N'This school was already created for that approval.';
+                ELSE
+                    -- The duplicate was somewhere else and the school is gone
+                    -- with the rollback. Say so.
+                    SELECT @Status = 0, @Code = 'DUPLICATE_RECORD',
+                           @Message = N'The school could not be created: a duplicate key was rejected '
+                                    + N'and nothing was saved. This has been logged.';
             END
             ELSE
                 THROW;

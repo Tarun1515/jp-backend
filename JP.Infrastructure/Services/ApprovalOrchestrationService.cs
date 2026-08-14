@@ -190,6 +190,44 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
                 "The approval has no organisation attached. It has been logged for investigation.");
         }
 
+        /*
+          The requestor's Uid, which the school's owner row needs.
+
+          Read here rather than threaded through the approval payload: the Uid
+          is the key that crosses a database boundary in this system, and the
+          approval carries only the bigint RequestorUserId, which is local to
+          jp_sso.
+
+          A failure to read it is NOT fatal — the school is still worth
+          creating, and USP_ProvisionSchoolOwner can add the membership
+          afterwards. But it is logged, because a school with no owner is a
+          school nobody can see into.
+        */
+        Guid? ownerUserUid = null;
+
+        try
+        {
+            var identity = await _users.GetIdentityAsync(header.RequestorUserId, cancellationToken)
+                .ConfigureAwait(false);
+
+            ownerUserUid = identity?.UserUid;
+
+            if (ownerUserUid is null)
+            {
+                _logger.LogError(
+                    "Approval {RequestNo}: could not read the Uid of requestor {UserId}, so the school will have " +
+                    "no owner row. Nobody will be able to see its branches until USP_ProvisionSchoolOwner is run.",
+                    header.RequestNo, header.RequestorUserId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Approval {RequestNo}: reading the requestor's Uid threw. The school will have no owner row.",
+                header.RequestNo);
+        }
+
         // ---- STEP 1: jp_sso — activate the user and grant the role ---------
         //
         // First on purpose. A failure here leaves nothing created anywhere,
@@ -274,7 +312,7 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
         try
         {
             var provisioned = await _provisioning
-                .ProvisionSchoolAsync(header.RequestUid, organizationUid, school, planId, actionByUserId, cancellationToken)
+                .ProvisionSchoolAsync(header.RequestUid, organizationUid, school, planId, ownerUserUid, actionByUserId, cancellationToken)
                 .ConfigureAwait(false);
 
             if (!provisioned.Succeeded)

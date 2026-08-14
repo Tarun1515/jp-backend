@@ -22,6 +22,7 @@ internal sealed class AuthService : IAuthService
     private readonly IJwtService _jwt;
     private readonly IEmailDispatchQueue _email;
     private readonly IDummyCredentialProvider _dummy;
+    private readonly ITeacherProvisioningService _teacherProvisioning;
     private readonly AuthOptions _options;
     private readonly JwtOptions _jwtOptions;
     private readonly ILogger<AuthService> _logger;
@@ -34,6 +35,7 @@ internal sealed class AuthService : IAuthService
         IJwtService jwt,
         IEmailDispatchQueue email,
         IDummyCredentialProvider dummy,
+        ITeacherProvisioningService teacherProvisioning,
         IOptions<AuthOptions> options,
         IOptions<JwtOptions> jwtOptions,
         ILogger<AuthService> logger)
@@ -45,6 +47,7 @@ internal sealed class AuthService : IAuthService
         _jwt = jwt;
         _email = email;
         _dummy = dummy;
+        _teacherProvisioning = teacherProvisioning;
         _options = options.Value;
         _jwtOptions = jwtOptions.Value;
         _logger = logger;
@@ -82,6 +85,28 @@ internal sealed class AuthService : IAuthService
             NormaliseEmail(request.Email), NormaliseMobile(request.Mobile),
             hashed.Hash, hashed.Salt, (int)hashed.Algorithm, hashed.Iterations,
             cancellationToken).ConfigureAwait(false)).EnsureSuccess();
+
+        /*
+          🔴 G21. The profile is created HERE, not by the next backfill.
+
+          A teacher account has been usable from signup since Phase 1 (2.9) with
+          no profile row anywhere. Phase 3B backfilled the accounts that already
+          existed; without this line every account created afterwards fell into
+          the same hole, one at a time.
+
+          ⚠️ Ordering matters and is not accidental: the account is committed in
+          jp_sso before this runs. There is no distributed transaction (2.2), so
+          this cannot be rolled into the registration — it is the same
+          activate-then-provision shape as an approval (2.48), with the same
+          consequence handled the same way.
+
+          It does NOT throw on failure. The account is already committed, and
+          reporting "registration failed" for an account that exists sends the
+          person into a retry that hits a duplicate-email error. See the service.
+        */
+        await _teacherProvisioning
+            .ProvisionAsync(result.UserUid ?? Guid.Empty, fullName: null, cancellationToken)
+            .ConfigureAwait(false);
 
         return new RegistrationResponse
         {

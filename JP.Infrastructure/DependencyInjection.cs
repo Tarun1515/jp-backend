@@ -118,6 +118,8 @@ public static class DependencyInjection
         services.AddScoped<IApprovalRepository, ApprovalRepository>();
         services.AddScoped<IProvisioningRepository, ProvisioningRepository>();
         services.AddScoped<IPlanRepository, PlanRepository>();
+        services.AddScoped<IAppProvisioningRepository, AppProvisioningRepository>();
+        services.AddScoped<ITeacherProvisioningService, TeacherProvisioningService>();
 
         // Public service interfaces — the boundary the API talks to.
         services.AddScoped<IAuthService, AuthService>();

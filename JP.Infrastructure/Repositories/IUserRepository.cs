@@ -67,6 +67,16 @@ internal interface IUserRepository
     Task<UpdateStatusResult> UpdateUserStatusForApprovalAsync(long userId, int newStatusId,
         long actionByUserId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// One account identity — its Uid, organisation, type and status.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 The Uid is the only key that crosses a database boundary in this system
+    /// (decision 2.2). Anything in jp_app or jp_mdm that has to name an account
+    /// resolves it through here rather than storing the bigint id.
+    /// </remarks>
+    Task<UserIdentityRow?> GetIdentityAsync(long userId, CancellationToken cancellationToken);
+
     Task<UpdateStatusResult> UpdateUserStatusAsync(Guid userUid, int newStatusId, int rowVersion,
         long actionByUserId, string? remarks, CancellationToken cancellationToken);
 
