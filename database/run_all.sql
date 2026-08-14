@@ -319,6 +319,14 @@ GO
 :r $(DbRoot)\jp_app\04_procedures\005_school_photos_facilities.sql
 :r $(DbRoot)\jp_app\04_procedures\006_branches.sql
 
+-- PHASE 3D — teacher side. The profile file first: the bridges and the
+-- experience procedures all EXEC USP_RecalculateTeacherProfile, which lives
+-- in it, and fn_TeacherIdForUser is what every one of them resolves through.
+:r $(DbRoot)\jp_app\04_procedures\007_teacher_profile.sql
+:r $(DbRoot)\jp_app\04_procedures\008_teacher_bridges.sql
+:r $(DbRoot)\jp_app\04_procedures\009_teacher_experiences_documents.sql
+:r $(DbRoot)\jp_app\04_procedures\010_teacher_public_profile.sql
+
 
 /*==============================================================================
   DONE
