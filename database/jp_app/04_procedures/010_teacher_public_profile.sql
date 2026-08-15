@@ -10,15 +10,33 @@
   A school browsing the teacher database gets everything it needs to decide
   whether it wants this person — and no way to contact them off-platform.
 
-  Contact details unlock when THE TEACHER HAS APPLIED TO THAT SCHOOL. Not when
-  the school pays, not when the school invites: when the teacher has made the
-  first move.
+  🔴 CONTACT UNLOCKS ON TEACHER CONSENT, AND ONLY ON TEACHER CONSENT.
+  Decision 2.56, LOCKED.
 
-  That line is chosen for three reasons, in order of weight:
+  Consent has exactly two forms:
 
-  1. CONSENT. A teacher who applied has decided that school may contact them.
-     A teacher who merely appeared in a search result has decided nothing, and
-     handing over their mobile number is a decision made on their behalf.
+      1. the teacher APPLIED to this school, or
+      2. the teacher ACCEPTED an invite from this school
+
+  and nothing else. Not payment. Not an invite the school merely sent.
+
+  ⚠️ A SCHOOL CAN PAY FOR CAPABILITY, NEVER FOR CONTACT. What a subscription
+  buys is the right to SEARCH the teacher database at all, how many invites it
+  may send, and possibly featured placement. It never buys a phone number. No
+  amount of money moves this line, because the line is not ours to move — it is
+  the teacher's.
+
+  That is better commercially as well as ethically: a school that pays gets
+  teachers who RESPONDED, not a list to cold-call. A contact list sold at browse
+  time means the first phone call happens off-platform and nothing after it
+  involves us.
+
+  The reasons, in order of weight:
+
+  1. CONSENT. A teacher who applied, or who accepted an invitation, has decided
+     that school may contact them. A teacher who merely appeared in a search
+     result has decided nothing, and handing over their mobile number is a
+     decision made on their behalf.
 
   2. IT IS WHAT MAKES THE PLATFORM WORTH ANYTHING. Contact details given away
      at browse time are the whole product given away — the school takes the
@@ -69,24 +87,72 @@ GO
 
   🔴 WRITTEN NOW, DELIBERATELY ALWAYS 0.
 
-  t_app_applications arrives in Phase 5. Until then no teacher has applied to
-  anybody, so "not unlocked" is not a placeholder — it is the correct answer.
+  t_app_applications arrives in Phase 5 and t_app_teacher_invites in Phase 6.
+  Until then no teacher has applied to anybody or accepted anything, so "not
+  unlocked" is not a placeholder — it is the correct answer.
 
-  When that table lands, replace the body with:
+  ---------------------------------------------------------------------------
+  🔴 EXACTLY TWO PATHS, AND THEY ARE BOTH THE TEACHER'S OWN ACT (2.56, LOCKED)
+  ---------------------------------------------------------------------------
+  When those tables land, the body becomes:
 
       RETURN CASE WHEN EXISTS (
+          -- 1. the teacher APPLIED to this school
           SELECT 1 FROM dbo.t_app_applications a
-          WHERE a.TeacherId = @TeacherId
-            AND a.SchoolId  = @ViewerSchoolId
-            AND a.Is_Deleted = 0) THEN 1 ELSE 0 END;
+          WHERE a.TeacherId  = @TeacherId
+            AND a.SchoolId   = @ViewerSchoolId
+            AND a.Is_Deleted = 0
 
-  ⚠️ Do NOT widen it to invites. A school inviting a teacher is the school
-  making the first move, and the invite travels through the platform precisely
-  so it does not need a phone number. Unlocking on invite would mean a school
-  could unlock any teacher by inviting everybody, which is the same as no rule.
+          UNION ALL
 
-  Written here rather than left for Phase 5 because whoever adds applications
-  will not know this rule exists, and the failure mode is silent: contact
+          -- 2. the teacher ACCEPTED an invite from this school
+          SELECT 1 FROM dbo.t_app_teacher_invites i
+          WHERE i.TeacherId    = @TeacherId
+            AND i.SchoolId     = @ViewerSchoolId
+            AND i.InviteStatus = <ACCEPTED>
+            AND i.Is_Deleted   = 0
+      ) THEN 1 ELSE 0 END;
+
+  ⚠️ SENT IS NOT ACCEPTED, AND THE DIFFERENCE IS THE WHOLE RULE.
+
+  An invite the school SENT unlocks nothing — otherwise a school invites every
+  teacher in the database on Monday and has every phone number by Tuesday, which
+  is the same as having no rule at all.
+
+  An invite the teacher ACCEPTED is consent in exactly the way an application
+  is: the teacher was asked, and said yes.
+
+  🔴 An earlier version of this comment said only "do not widen this to
+  invites", which reads as excluding both. It excludes one.
+
+  ---------------------------------------------------------------------------
+  ⚠️ THE SPEC HAS NO "ACCEPTED" STATUS YET — PHASE 6 MUST ADD ONE
+  ---------------------------------------------------------------------------
+  DB_TABLE_STRUCTURE gives t_app_teacher_invites the statuses
+  Sent / Viewed / Applied / Ignored. None of them means what path 2 needs:
+
+      Sent     the school acted, not the teacher
+      Viewed   opening a message is not saying yes
+      Applied  already covered by path 1 — an application exists — so mapping
+               path 2 onto it makes path 2 do nothing
+      Ignored  a refusal
+
+  So Phase 6 adds an ACCEPTED status, or path 2 quietly collapses into path 1
+  and the monetization plan is broken again with nobody noticing. That is
+  precisely the shape of failure this file exists to prevent.
+
+  ---------------------------------------------------------------------------
+  🔴 AND NEVER A THIRD PATH
+  ---------------------------------------------------------------------------
+  Not "the school has a paid plan". Not "the school has invites remaining". A
+  subscription buys CAPABILITY — whether a school may search at all, how many
+  invites it may send — and never the teacher's contact details (2.56).
+
+  If a future requirement seems to need payment here, the requirement is being
+  described wrongly: what is being sold is reach, and reach is invites.
+
+  Written now rather than left for Phase 5 because whoever adds applications
+  will not know this rule exists, and the failure mode is silent — contact
   details that were never supposed to flow, flowing.
 ==============================================================================*/
 CREATE OR ALTER FUNCTION dbo.fn_TeacherContactUnlocked
@@ -266,8 +332,9 @@ BEGIN
         SELECT @Code = 'FORBIDDEN', @Message = N'Only a school can request contact details.';
     ELSE IF dbo.fn_TeacherContactUnlocked(@TeacherId, @ViewerSchoolId) = 0
         SELECT @Code = 'CONTACT_LOCKED',
-               @Message = N'You will see this teacher''s contact details once they apply to one of your jobs. '
-                        + N'Until then you can invite them through the platform.';
+               @Message = N'You will see this teacher''s contact details once they apply to one of your jobs, '
+                        + N'or accept an invitation from you. Until then you can invite them through the platform '
+                        + N'— they will see your message and can reply.';
 
     IF @Code IS NULL
     BEGIN
