@@ -162,3 +162,43 @@ GO
 
 PRINT '    Scope resolver ready.';
 GO
+
+/*==============================================================================
+  USP_GetSchoolsForUser
+
+  Which schools an account belongs to.
+
+  🔴 THE API'S ANSWER TO "WHICH SCHOOL IS THIS?"
+
+  Added in Phase 3E. Every school endpoint needs a SchoolId, and there are only
+  two places it can come from: the caller's token, or the caller's request. The
+  second is an IDOR waiting to happen — a school naming another school's id —
+  so it comes from here, resolved through the membership table.
+
+  ⚠️ Returns a LIST, not a single row. Today every school user belongs to
+  exactly one school, so the service takes the only element. It is a list
+  because t_app_school_users does not forbid two memberships and a group
+  eventually will have them — and a procedure that returned TOP 1 would answer
+  that question arbitrarily rather than making the caller face it.
+
+  Ordered by school name so "the first one" is at least stable.
+==============================================================================*/
+CREATE OR ALTER PROCEDURE dbo.USP_GetSchoolsForUser
+    @UserUid uniqueidentifier
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT
+        s.SchoolId,
+        s.SchoolName,
+        su.RoleInSchool
+    FROM dbo.t_app_school_users su
+        INNER JOIN dbo.t_app_schools s
+            ON s.SchoolId = su.SchoolId AND s.Is_Deleted = 0
+    WHERE su.UserUid    = @UserUid
+      AND su.Is_Active  = 1
+      AND su.Is_Deleted = 0
+    ORDER BY s.SchoolName;
+END
+GO

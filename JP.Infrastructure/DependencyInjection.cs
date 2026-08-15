@@ -119,6 +119,15 @@ public static class DependencyInjection
         services.AddScoped<IProvisioningRepository, ProvisioningRepository>();
         services.AddScoped<IPlanRepository, PlanRepository>();
         services.AddScoped<IAppProvisioningRepository, AppProvisioningRepository>();
+
+        // ---- Phase 3E: profile APIs ------------------------------------
+        services.AddScoped<ISchoolRepository, SchoolRepository>();
+        services.AddScoped<IBranchRepository, BranchRepository>();
+        services.AddScoped<ITeacherRepository, TeacherRepository>();
+        services.AddScoped<ISchoolProfileService, SchoolProfileService>();
+        services.AddScoped<IBranchService, BranchService>();
+        services.AddScoped<ITeacherProfileService, TeacherProfileService>();
+        services.AddScoped<ITeacherDirectoryService, TeacherDirectoryService>();
         services.AddScoped<ITeacherProvisioningService, TeacherProvisioningService>();
 
         // Public service interfaces — the boundary the API talks to.

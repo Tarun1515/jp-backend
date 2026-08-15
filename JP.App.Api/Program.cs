@@ -97,6 +97,19 @@ builder.Services.AddCors(cors => cors.AddPolicy(CorsPolicyName, policy =>
         .AllowCredentials();
 }));
 
+/*
+  🔴 REFUSE TO START IF THE BROWSE DTO HAS GROWN A CONTACT FIELD.
+
+  A school browsing the teacher database must never receive an email, a mobile
+  number, a resume path or a date of birth (2.54, 2.56). The type says so in a
+  comment; comments do not fail a build, and this does.
+
+  Deliberately before Build() has a chance to serve anything: a school that has
+  already read a teacher's phone number cannot be made to un-read it, so the
+  right failure is loud, local and immediate.
+*/
+JP.App.Api.Startup.ContactLeakGuard.Verify();
+
 var app = builder.Build();
 
 // ---------------------------------------------------------------------------
