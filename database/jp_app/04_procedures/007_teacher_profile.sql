@@ -217,37 +217,65 @@ BEGIN
         + (CASE WHEN @locations        > 0 THEN  7 ELSE 0 END)
         + (CASE WHEN @classLevels      > 0 THEN  5 ELSE 0 END);
 
-    UPDATE t
-       SET t.ProfileCompletionPercent = @pct,
-           t.TotalExperienceMonths    = x.months,
-           t.ModifiedOn               = SYSUTCDATETIME()
+    /*
+      🔴 ToDate + 1 DAY, and the reason is not cosmetic.
+
+      DATEDIFF(MONTH, ...) counts BOUNDARIES CROSSED, not months elapsed. For
+      1 June 2020 to 31 May 2022 it returns 23, because the 31st has not crossed
+      into June — but that teacher worked twenty-four months.
+
+      Every closed period was short by one, so a career of six jobs was short by
+      six. Treating ToDate as the LAST DAY WORKED makes the period
+      [FromDate, ToDate + 1) and DATEDIFF counts it correctly.
+
+      An open period runs to today untouched: the current month genuinely is not
+      complete, and rounding it up would claim a month somebody has not yet
+      worked.
+    */
+    DECLARE @months int;
+
+    SELECT @months = SUM(DATEDIFF(
+               MONTH,
+               e.FromDate,
+               CASE WHEN e.ToDate IS NULL THEN @today ELSE DATEADD(DAY, 1, e.ToDate) END))
+    FROM dbo.t_app_teacher_experiences e
+    WHERE e.TeacherId = @TeacherId AND e.Is_Deleted = 0;
+
+    /*
+      🔴 COMPUTE, COMPARE, THEN WRITE — never write unconditionally.
+
+      This runs after every save, including one that changed nothing. An
+      unconditional UPDATE stamps ModifiedOn each time, which turns "when did
+      this teacher last change something" into "when did anybody last press
+      Save" — the exact failure the bridge-sync argument in
+      005_school_photos_facilities.sql rejects, committed on the parent row
+      instead of the child.
+
+      ⚠️ Found by the Phase 3D independent verification, not by the suite. The
+      suite asserted on the procedure's own Added/Restored/Removed counters,
+      which were correctly zero; the verification read the TABLE afterwards and
+      saw ModifiedOn had moved anyway. A counter is a procedure's claim about
+      itself.
+
+      RowVersion is deliberately NOT bumped here either way: a recalculation is
+      the server's own bookkeeping, not an edit somebody else should lose a
+      concurrency race to.
+    */
+    DECLARE @currentPct tinyint, @currentMonths int;
+
+    SELECT @currentPct = t.ProfileCompletionPercent, @currentMonths = t.TotalExperienceMonths
     FROM dbo.t_app_teachers t
-    OUTER APPLY (
-        /*
-          🔴 ToDate + 1 DAY, and the reason is not cosmetic.
-
-          DATEDIFF(MONTH, ...) counts BOUNDARIES CROSSED, not months elapsed.
-          For 1 June 2020 to 31 May 2022 it returns 23, because the 31st has not
-          crossed into June — but that teacher worked twenty-four months.
-
-          Every closed period was short by one, so a career of six jobs was short
-          by six. Treating ToDate as the LAST DAY WORKED makes the period
-          [FromDate, ToDate + 1) and DATEDIFF counts it correctly.
-
-          An open period runs to today untouched: the current month genuinely is
-          not complete, and rounding it up would claim a month somebody has not
-          yet worked.
-
-          Caught by the Phase 3D suite asserting 48 for two two-year roles.
-        */
-        SELECT SUM(DATEDIFF(
-                   MONTH,
-                   e.FromDate,
-                   CASE WHEN e.ToDate IS NULL THEN @today ELSE DATEADD(DAY, 1, e.ToDate) END)) AS months
-        FROM dbo.t_app_teacher_experiences e
-        WHERE e.TeacherId = @TeacherId AND e.Is_Deleted = 0
-    ) x
     WHERE t.TeacherId = @TeacherId;
+
+    IF @currentPct = @pct
+       AND ((@currentMonths IS NULL AND @months IS NULL) OR @currentMonths = @months)
+        RETURN;
+
+    UPDATE dbo.t_app_teachers
+       SET ProfileCompletionPercent = @pct,
+           TotalExperienceMonths    = @months,
+           ModifiedOn               = SYSUTCDATETIME()
+     WHERE TeacherId = @TeacherId;
 END
 GO
 
