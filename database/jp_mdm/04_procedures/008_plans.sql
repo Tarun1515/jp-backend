@@ -55,5 +55,39 @@ BEGIN
 END
 GO
 
+/*==============================================================================
+  USP_GetPlanById — one plan, by the id a subscription stores.
+
+  ---------------------------------------------------------------------------
+  THE OTHER HALF OF THE SAME CROSS-DATABASE READ (3I)
+  ---------------------------------------------------------------------------
+  Provisioning reads the DEFAULT plan here and passes its id into jp_app. Both
+  dashboards need the journey back: jp_app holds a PlanId and no name, so the
+  API reads the name here and joins the two in memory (2.2).
+
+  ⚠️ No Is_Active filter, deliberately. A subscription can point at a plan that
+  has since been withdrawn, and "your plan" is still the honest answer — hiding
+  it would leave the dashboard showing an account with no plan at all, which is
+  a different and wrong statement.
+==============================================================================*/
+CREATE OR ALTER PROCEDURE dbo.USP_GetPlanById
+    @PlanId int
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT
+        p.PlanId,
+        p.PlanCode,
+        p.Name,
+        p.UserTypeId,
+        p.DurationDays,
+        p.Price
+    FROM dbo.m_mdm_plans p
+    WHERE p.PlanId = @PlanId
+      AND p.Is_Deleted = 0;
+END
+GO
+
 PRINT '    Plan procedures ready.';
 GO

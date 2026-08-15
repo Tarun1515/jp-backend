@@ -20,6 +20,9 @@ internal sealed class PlanRow
 internal interface IPlanRepository
 {
     Task<PlanRow?> GetDefaultPlanAsync(int userTypeId, CancellationToken cancellationToken);
+
+    /// <summary>One plan, by the id a subscription row stores (3I).</summary>
+    Task<PlanRow?> GetByIdAsync(int planId, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -52,5 +55,13 @@ internal sealed class PlanRepository : BaseRepository, IPlanRepository
             .ConfigureAwait(false);
 
         return rows.Count > 0 ? rows[0] : null;
+    }
+
+    public Task<PlanRow?> GetByIdAsync(int planId, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@PlanId", planId, DbType.Int32);
+
+        return QueryFirstOrDefaultAsync<PlanRow>("USP_GetPlanById", p, cancellationToken);
     }
 }

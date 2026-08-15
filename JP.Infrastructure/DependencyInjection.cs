@@ -137,6 +137,12 @@ public static class DependencyInjection
         services.AddScoped<ISchoolTeamRepository, SchoolTeamRepository>();
         services.AddScoped<ISchoolTeamService, SchoolTeamService>();
 
+        // ---- Phase 3I: the dashboards -----------------------------------
+        // Compose from the profile, team and subscription reads that already
+        // exist. The subscription is the one thing nothing else returned.
+        services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
+        services.AddScoped<IDashboardService, DashboardService>();
+
         // Public service interfaces — the boundary the API talks to.
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserService, UserService>();

@@ -337,6 +337,9 @@ GO
 -- Phase 3G — school team management.
 :r $(DbRoot)\jp_app\04_procedures\011_school_team.sql
 
+-- Phase 3I. The one thing neither dashboard could read from anywhere else.
+:r $(DbRoot)\jp_app\04_procedures\012_subscription.sql
+
 
 /*==============================================================================
   DONE
