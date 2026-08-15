@@ -73,7 +73,7 @@ BEGIN
         b.BranchId, b.BranchUid, b.BranchName, b.BranchCode, b.IsHeadOffice,
         b.AddressLine1, b.AddressLine2, b.CityId, b.DistrictId, b.StateId, b.Pincode,
         b.Latitude, b.Longitude, b.ContactPerson, b.ContactEmail, b.ContactMobile,
-        b.Is_Active, b.RowVersion
+        b.Is_Active AS IsActive, b.RowVersion
     FROM dbo.t_app_school_branches b
         INNER JOIN dbo.fn_VisibleBranches(@SchoolId, @UserUid) v ON v.BranchId = b.BranchId
     WHERE b.Is_Deleted = 0

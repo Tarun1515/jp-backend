@@ -51,6 +51,18 @@ internal interface ISchoolRepository
 
     Task<ProcResult> SavePhotoAsync(long schoolId, Guid userUid, string action, long? photoId, long? branchId, string? filePath, string? caption, IReadOnlyList<long>? order, long actionByUserId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Where a photo's file lives, if the caller may see it.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 Returns null for a photo belonging to another school — the procedure
+    /// gates on <c>fn_IsSchoolMember</c>, so this layer never learns it exists.
+    /// The path is internal and never reaches a client (3F).
+    /// </remarks>
+    Task<string?> GetPhotoPathAsync(long photoId, Guid userUid, CancellationToken cancellationToken);
+
+    Task<string?> GetLogoPathAsync(long schoolId, Guid userUid, CancellationToken cancellationToken);
+
     Task<FacilitySyncResult> SaveFacilitiesAsync(long schoolId, Guid userUid, long? branchId, IReadOnlyList<int> facilityIds, long actionByUserId, CancellationToken cancellationToken);
 }
 
@@ -230,21 +242,50 @@ internal sealed class SchoolRepository : BaseRepository, ISchoolRepository
         p.Add("@ActionByUserId", actionByUserId, DbType.Int64);
 
         /*
-          The reorder list. ⚠️ A table type cannot be NULL — "Operand type
-          clash" — so an empty table is how "no list" is expressed, and the ADD
-          and DELETE branches ignore it anyway.
+          The reorder list, with an explicit POSITION per row.
+
+          🔴 The position is sent, not inferred. This used to pass dbo.IntIdList
+          — bare ids — and the procedure derived each position by sorting on the
+          id, so the caller's order was silently discarded and every reorder
+          wrote insertion order (3F found it; the type is dbo.OrderedIdList now).
+
+          ⚠️ A table type cannot be NULL — "Operand type clash" — so an empty
+          table is how "no list" is expressed, and the other branches ignore it.
+
+          ⚠️ bigint, matching PhotoId. The old int type would have truncated a
+          large id into a different photo's.
         */
         var table = new DataTable();
-        table.Columns.Add("Id", typeof(int));
+        table.Columns.Add("Id", typeof(long));
+        table.Columns.Add("Position", typeof(int));
 
+        var position = 1;
         foreach (var id in order ?? [])
         {
-            table.Rows.Add((int)id);
+            table.Rows.Add(id, position++);
         }
 
-        p.Add("@PhotoOrder", table.AsTableValuedParameter("dbo.IntIdList"));
+        p.Add("@PhotoOrder", table.AsTableValuedParameter("dbo.OrderedIdList"));
 
         return QuerySingleAsync<ProcResult>("USP_SaveSchoolPhotos", p, cancellationToken);
+    }
+
+    public Task<string?> GetPhotoPathAsync(long photoId, Guid userUid, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@PhotoId", photoId, DbType.Int64);
+        p.Add("@UserUid", userUid, DbType.Guid);
+
+        return QueryFirstOrDefaultAsync<string>("USP_GetSchoolPhotoPath", p, cancellationToken);
+    }
+
+    public Task<string?> GetLogoPathAsync(long schoolId, Guid userUid, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@SchoolId", schoolId, DbType.Int64);
+        p.Add("@UserUid", userUid, DbType.Guid);
+
+        return QueryFirstOrDefaultAsync<string>("USP_GetSchoolLogoPath", p, cancellationToken);
     }
 
     public Task<FacilitySyncResult> SaveFacilitiesAsync(

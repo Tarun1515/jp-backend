@@ -24,7 +24,22 @@ public interface ISchoolProfileService
 
     Task ReorderPhotosAsync(ReorderPhotosRequest request, ClaimsPrincipal caller, CancellationToken cancellationToken);
 
+    Task SavePhotoCaptionAsync(long photoId, SavePhotoCaptionRequest request, ClaimsPrincipal caller, CancellationToken cancellationToken);
+
     Task DeletePhotoAsync(long photoId, ClaimsPrincipal caller, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Opens a gallery photo's file for the caller.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 Uploads live under App_Data, which is NOT served statically and must
+    /// never be — teacher resumes and registration documents share that root.
+    /// So an image is streamed through here, membership-gated, and a photo the
+    /// caller may not see is a 404 rather than a 403 (3F).
+    /// </remarks>
+    Task<(Stream Content, string ContentType)> OpenPhotoAsync(long photoId, ClaimsPrincipal caller, CancellationToken cancellationToken);
+
+    Task<(Stream Content, string ContentType)> OpenLogoAsync(ClaimsPrincipal caller, CancellationToken cancellationToken);
 
     Task SaveFacilitiesAsync(SaveFacilitiesRequest request, ClaimsPrincipal caller, CancellationToken cancellationToken);
 
@@ -254,6 +269,73 @@ internal sealed class SchoolProfileService : ISchoolProfileService
 
         result.EnsureSuccess();
     }
+
+    public async Task SavePhotoCaptionAsync(
+        long photoId, SavePhotoCaptionRequest request, ClaimsPrincipal caller, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var schoolId = await ResolveSchoolIdAsync(caller, cancellationToken).ConfigureAwait(false);
+
+        var result = await _schools
+            .SavePhotoAsync(schoolId, caller.GetUserUid(), "CAPTION", photoId, null, null, request.Caption, null,
+                caller.GetUserId(), cancellationToken)
+            .ConfigureAwait(false);
+
+        result.EnsureSuccess();
+    }
+
+    /// <summary>
+    /// Streams a gallery photo.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ The stored path never leaves this method. The client addresses a photo
+    /// by its id; the path is resolved here and again inside the storage
+    /// service, which refuses anything that lands outside the storage root.
+    /// A client that could name a path could name any path.
+    /// </remarks>
+    public async Task<(Stream Content, string ContentType)> OpenPhotoAsync(
+        long photoId, ClaimsPrincipal caller, CancellationToken cancellationToken)
+    {
+        // 🔴 No school resolution here on purpose — the procedure gates the photo
+        // on membership of ITS OWN school, so a photo id from elsewhere resolves
+        // to nothing without this layer learning that it exists.
+        var path = await _schools.GetPhotoPathAsync(photoId, caller.GetUserUid(), cancellationToken)
+                       .ConfigureAwait(false)
+                   ?? throw new NotFoundException("That photo was not found.");
+
+        return (await _storage.OpenReadAsync(path, cancellationToken).ConfigureAwait(false), ContentTypeFor(path));
+    }
+
+    public async Task<(Stream Content, string ContentType)> OpenLogoAsync(
+        ClaimsPrincipal caller, CancellationToken cancellationToken)
+    {
+        var schoolId = await ResolveSchoolIdAsync(caller, cancellationToken).ConfigureAwait(false);
+
+        var path = await _schools.GetLogoPathAsync(schoolId, caller.GetUserUid(), cancellationToken)
+                       .ConfigureAwait(false)
+                   ?? throw new NotFoundException("This school has no logo yet.");
+
+        return (await _storage.OpenReadAsync(path, cancellationToken).ConfigureAwait(false), ContentTypeFor(path));
+    }
+
+    /// <summary>
+    /// The content type, from the extension the upload validator already allowed.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Only the three image types <c>ImageExtensions</c> permits are mapped,
+    /// and anything else falls back to a generic type rather than being guessed
+    /// at. A stored file cannot have another extension — UploadValidator gave it
+    /// the name — so a surprise here means something else has gone wrong, and
+    /// serving it as a byte stream is the conservative answer.
+    /// </remarks>
+    private static string ContentTypeFor(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            _ => "application/octet-stream",
+        };
 
     public async Task DeletePhotoAsync(long photoId, ClaimsPrincipal caller, CancellationToken cancellationToken)
     {

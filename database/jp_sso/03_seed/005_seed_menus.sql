@@ -132,7 +132,11 @@ VALUES
 -- =============================================================================
 ('SCHOOL_DASHBOARD',        NULL, N'Dashboard',             2, N'/dashboard',            'layout-dashboard', NULL,                  10, 1, 1),
 ('SCHOOL_PROFILE',          NULL, N'School profile',        2, N'/profile',              'building-2',       'PROFILE.EDIT',        20, 1, 1),
-('SCHOOL_BRANCHES',         NULL, N'Branches',              2, N'/branches',             'map-pin',          'BRANCH.MANAGE',       30, 1, 1),
+-- ⚠️ "Campuses", not "Branches". The screen, its copy and the school's own
+-- vocabulary all say campus; a sidebar saying something else is one more word
+-- for the same thing. The ROUTE stays /branches — renaming it would break every
+-- saved link for a label change (3F).
+('SCHOOL_BRANCHES',         NULL, N'Campuses',              2, N'/branches',             'map-pin',          'BRANCH.MANAGE',       30, 1, 1),
 ('SCHOOL_JOBS',             NULL, N'Jobs',                  2, N'/jobs',                 'briefcase',        'JOB.VIEW',            40, 1, 1),
 ('SCHOOL_APPLICANTS',       NULL, N'Applicants',            2, N'/applicants',           'user-check',       'APPLICANT.VIEW',      50, 1, 1),
 ('SCHOOL_TEACHER_SEARCH',   NULL, N'Find teachers',         2, N'/teacher-search',       'search',           'TEACHER_SEARCH.VIEW', 60, 1, 1),

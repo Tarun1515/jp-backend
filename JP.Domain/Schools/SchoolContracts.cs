@@ -209,8 +209,22 @@ public sealed record SaveFacilitiesRequest
 
 public sealed record ReorderPhotosRequest
 {
-    /// <summary>Photo ids in their new order.</summary>
+    /// <summary>
+    /// Photo ids in their new order — position 1 first.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ The ORDER OF THIS ARRAY is the data. It used to be sent to a procedure
+    /// that sorted by the id value instead, so every reorder quietly wrote
+    /// insertion order and reported success; 3F found it by asking for c, a, b
+    /// and getting a, b, c. The position is now explicit all the way down.
+    /// </remarks>
     public IReadOnlyList<long> PhotoIds { get; init; } = [];
+}
+
+/// <summary>Retitles one photo. Nothing else about it changes.</summary>
+public sealed record SavePhotoCaptionRequest
+{
+    public string? Caption { get; init; }
 }
 
 /// <remarks>

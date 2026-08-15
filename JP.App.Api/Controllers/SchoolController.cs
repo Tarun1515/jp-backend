@@ -111,6 +111,66 @@ public sealed class SchoolController : ControllerBase
         return Ok(ApiResponse.Success("Photos reordered."));
     }
 
+    /// <summary>
+    /// Retitles one photo.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the upload: a caption is edited far more often than a photo
+    /// is replaced — somebody fixes a typo — and folding the two together would
+    /// mean re-uploading a file to change a line of text.
+    /// </remarks>
+    [HttpPut("photos/{id:long}/caption")]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> SavePhotoCaption(
+        long id, [FromBody] SavePhotoCaptionRequest request, CancellationToken cancellationToken)
+    {
+        await _schools.SavePhotoCaptionAsync(id, request, User, cancellationToken).ConfigureAwait(false);
+        return Ok(ApiResponse.Success("Caption saved."));
+    }
+
+    /// <summary>
+    /// The bytes of one gallery photo.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 UPLOADS ARE NOT SERVED STATICALLY, AND MUST NEVER BE. App_Data holds
+    /// teacher resumes and registration documents in the same root; a static
+    /// handler over it would publish every one of them.
+    /// </para>
+    /// <para>
+    /// So an image is streamed through here, gated on membership of the school
+    /// that owns it. A photo the caller may not see returns 404 — not 403, which
+    /// would confirm that it exists.
+    /// </para>
+    /// <para>
+    /// ⚠️ Added in 3F. Photos have had a stored path since 2F and no way to
+    /// fetch the bytes, which went unnoticed until something tried to render one.
+    /// </para>
+    /// </remarks>
+    [HttpGet("photos/{id:long}/file")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetPhotoFile(long id, CancellationToken cancellationToken)
+    {
+        var (content, contentType) = await _schools.OpenPhotoAsync(id, User, cancellationToken)
+            .ConfigureAwait(false);
+
+        return File(content, contentType);
+    }
+
+    /// <summary>The school's own logo, for the caller's own school.</summary>
+    [HttpGet("logo/file")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetLogoFile(CancellationToken cancellationToken)
+    {
+        var (content, contentType) = await _schools.OpenLogoAsync(User, cancellationToken)
+            .ConfigureAwait(false);
+
+        return File(content, contentType);
+    }
+
     /// <summary>Removes one photo. Soft delete — the row is kept.</summary>
     [HttpDelete("photos/{id:long}")]
     [ProducesResponseType(typeof(Response<object>), StatusCodes.Status200OK)]

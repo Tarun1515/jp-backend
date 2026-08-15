@@ -25,6 +25,23 @@ GO
 
   Optional filters use (@P IS NULL OR Col = @P) with OPTION (RECOMPILE), which
   belongs on list procedures only (2.30).
+
+  ---------------------------------------------------------------------------
+  🔴 `Is_Active AS IsActive` — THE ALIAS IS LOAD-BEARING. DO NOT REMOVE IT.
+  ---------------------------------------------------------------------------
+  Dapper matches a column to a property by name, and it does NOT strip
+  underscores unless DefaultTypeMap.MatchNamesWithUnderscores is turned on —
+  which this solution deliberately leaves off, because a global name-mangling
+  rule changes every mapping in the system at once.
+
+  So `Is_Active` did not reach `BranchDto.IsActive` at all, and every branch the
+  API returned said isActive: false while the row said 1. It shipped in 3E and
+  was invisible for two phases because nothing rendered it; 3F put a status
+  badge on the screen and every campus read "Closed".
+
+  ⚠️ The standard columns are the ONLY ones with underscores in this schema
+  (2.4), so this is the whole class of bug — anywhere one of them is returned to
+  a DTO, it needs the alias.
 ==============================================================================*/
 CREATE OR ALTER PROCEDURE dbo.USP_GetBranchList
     @SchoolId       bigint,
@@ -49,7 +66,7 @@ BEGIN
         b.AddressLine1, b.AddressLine2, b.CityId, b.DistrictId, b.StateId, b.Pincode,
         b.Latitude, b.Longitude,
         b.ContactPerson, b.ContactEmail, b.ContactMobile,
-        b.Is_Active, b.RowVersion, b.CreatedOn
+        b.Is_Active AS IsActive, b.RowVersion, b.CreatedOn
     FROM dbo.t_app_school_branches b
         -- 🔴 THE SCOPE GATE. An INNER JOIN rather than an EXISTS on purpose:
         -- it is impossible to write this query and forget the filter, because
@@ -91,7 +108,7 @@ BEGIN
         b.AddressLine1, b.AddressLine2, b.CityId, b.DistrictId, b.StateId, b.Pincode,
         b.Latitude, b.Longitude,
         b.ContactPerson, b.ContactEmail, b.ContactMobile,
-        b.Is_Active, b.RowVersion
+        b.Is_Active AS IsActive, b.RowVersion
     FROM dbo.t_app_school_branches b
         INNER JOIN dbo.fn_VisibleBranches(@SchoolId, @UserUid) v ON v.BranchId = b.BranchId
     WHERE b.BranchId = @BranchId AND b.Is_Deleted = 0;

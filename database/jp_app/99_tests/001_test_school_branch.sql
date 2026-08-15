@@ -502,6 +502,102 @@ SELECT 'owner', N'Recording the same owner twice is ALREADY_PROVISIONED',
 FROM @r;
 
 
+/*==============================================================================
+  11. 🔴 THE GALLERY — ADDED IN 3F, BECAUSE REORDER DID NOT REORDER
+
+  ---------------------------------------------------------------------------
+  The bug this section exists to keep dead
+  ---------------------------------------------------------------------------
+  USP_SaveSchoolPhotos took a bare id list and derived each photo's position
+  with ROW_NUMBER() OVER (ORDER BY Id) — the ID VALUE, not the caller's order.
+  So every reorder wrote insertion order, reported "Photos reordered." and
+  Status 1, and the list came back unchanged looking like a UI bug.
+
+  It survived 3C's suite because 3C never asserted the ORDER, only that the call
+  succeeded. A green suite is not evidence; asking for c, a, b and looking at
+  what came back is.
+==============================================================================*/
+DECLARE @ph1 bigint, @ph2 bigint, @ph3 bigint;
+DECLARE @pOrder dbo.OrderedIdList;
+DECLARE @rp TABLE (Status int, Code varchar(50), Message nvarchar(400), Id bigint);
+DECLARE @capModBefore datetime2, @capModAfter datetime2;
+
+INSERT INTO dbo.t_app_school_photos (SchoolId, FilePath, DisplayOrder) VALUES (@schoolA, N'p-a.jpg', 1);
+SET @ph1 = SCOPE_IDENTITY();
+INSERT INTO dbo.t_app_school_photos (SchoolId, FilePath, DisplayOrder) VALUES (@schoolA, N'p-b.jpg', 2);
+SET @ph2 = SCOPE_IDENTITY();
+INSERT INTO dbo.t_app_school_photos (SchoolId, FilePath, DisplayOrder) VALUES (@schoolA, N'p-c.jpg', 3);
+SET @ph3 = SCOPE_IDENTITY();
+
+-- Ask for c, a, b — an order the ids alone can never produce.
+INSERT INTO @pOrder (Id, Position) VALUES (@ph3, 1), (@ph1, 2), (@ph2, 3);
+
+DELETE FROM @r;
+INSERT INTO @r EXEC dbo.USP_SaveSchoolPhotos
+    @SchoolId = @schoolA, @UserUid = @ownerA, @Action = 'REORDER', @PhotoOrder = @pOrder;
+
+SELECT @cnt = COUNT(*) FROM dbo.t_app_school_photos
+WHERE (PhotoId = @ph3 AND DisplayOrder = 1)
+   OR (PhotoId = @ph1 AND DisplayOrder = 2)
+   OR (PhotoId = @ph2 AND DisplayOrder = 3);
+INSERT INTO @t VALUES ('photos NEG', N'🔴 REORDER honours the ORDER SENT, not the id order',
+    CAST(@cnt AS nvarchar(10)) + N' of 3 in place', CASE WHEN @cnt = 3 THEN 'PASS' ELSE 'FAIL' END);
+
+-- The captions.
+DELETE FROM @r;
+INSERT INTO @r EXEC dbo.USP_SaveSchoolPhotos
+    @SchoolId = @schoolA, @UserUid = @ownerA, @Action = 'CAPTION',
+    @PhotoId = @ph1, @Caption = N'The quadrangle', @PhotoOrder = @pOrder;
+
+SELECT @cnt = COUNT(*) FROM dbo.t_app_school_photos
+WHERE PhotoId = @ph1 AND Caption = N'The quadrangle' AND FilePath = N'p-a.jpg' AND DisplayOrder = 2;
+INSERT INTO @t VALUES ('photos', N'CAPTION retitles one photo and touches nothing else',
+    CAST(@cnt AS nvarchar(10)) + N' row', CASE WHEN @cnt = 1 THEN 'PASS' ELSE 'FAIL' END);
+
+SELECT @capModBefore = ModifiedOn FROM dbo.t_app_school_photos WHERE PhotoId = @ph1;
+
+DELETE FROM @r;
+INSERT INTO @r EXEC dbo.USP_SaveSchoolPhotos
+    @SchoolId = @schoolA, @UserUid = @ownerA, @Action = 'CAPTION',
+    @PhotoId = @ph1, @Caption = N'The quadrangle', @PhotoOrder = @pOrder;
+
+SELECT @capModAfter = ModifiedOn FROM dbo.t_app_school_photos WHERE PhotoId = @ph1;
+INSERT INTO @t VALUES ('photos NEG', N'🔴 …and the same caption again writes NOTHING (2.54)',
+    CONVERT(nvarchar(30), @capModAfter, 126),
+    CASE WHEN @capModBefore = @capModAfter THEN 'PASS' ELSE 'FAIL' END);
+
+-- 🔴 And the cross-school case, which is the reason PhotoId is checked at all.
+DELETE FROM @r;
+INSERT INTO @r EXEC dbo.USP_SaveSchoolPhotos
+    @SchoolId = @schoolB, @UserUid = @ownerB, @Action = 'DELETE',
+    @PhotoId = @ph1, @PhotoOrder = @pOrder;
+
+INSERT INTO @t
+SELECT 'photos NEG', N'🔴 Another school cannot delete our photo',
+       ISNULL(Code, '(deleted it)'),
+       CASE WHEN Status = 0 AND Code = 'NOT_FOUND' THEN 'PASS' ELSE 'FAIL' END
+FROM @r;
+
+SELECT @cnt = COUNT(*) FROM dbo.t_app_school_photos WHERE PhotoId = @ph1 AND Is_Deleted = 0;
+INSERT INTO @t VALUES ('photos NEG', N'🔴 …and it is still there',
+    CAST(@cnt AS nvarchar(10)) + N' row', CASE WHEN @cnt = 1 THEN 'PASS' ELSE 'FAIL' END);
+
+-- The media path read, which is what lets a browser show any of this.
+SELECT @cnt = COUNT(*) FROM (
+    SELECT FilePath FROM dbo.t_app_school_photos p
+    WHERE p.PhotoId = @ph1 AND p.Is_Deleted = 0
+      AND dbo.fn_IsSchoolMember(p.SchoolId, @ownerA) = 1) x;
+INSERT INTO @t VALUES ('photos', N'A member can resolve a photo''s stored path',
+    CAST(@cnt AS nvarchar(10)) + N' row', CASE WHEN @cnt = 1 THEN 'PASS' ELSE 'FAIL' END);
+
+SELECT @cnt = COUNT(*) FROM (
+    SELECT FilePath FROM dbo.t_app_school_photos p
+    WHERE p.PhotoId = @ph1 AND p.Is_Deleted = 0
+      AND dbo.fn_IsSchoolMember(p.SchoolId, @ownerB) = 1) x;
+INSERT INTO @t VALUES ('photos NEG', N'🔴 …and another school''s owner resolves ZERO',
+    CAST(@cnt AS nvarchar(10)) + N' rows', CASE WHEN @cnt = 0 THEN 'PASS' ELSE 'FAIL' END);
+
+
 ROLLBACK TRANSACTION;
 
 /*==============================================================================

@@ -194,6 +194,38 @@ END
 GO
 
 
+/*------------------------------------------------------------------------------
+  🔴 AN ORDER NEEDS A POSITION COLUMN. THIS TYPE EXISTS BECAUSE ONE DID NOT.
+
+  Added in 3F, after the gallery screen found that REORDER did not reorder.
+
+  The old signature took dbo.IntIdList — ids and nothing else — and derived each
+  photo's position with ROW_NUMBER() OVER (ORDER BY Id). A table variable has no
+  inherent order, which the old comment correctly said, and then it ordered by
+  the ID VALUE anyway. So every "reorder" wrote DisplayOrder = insertion order,
+  whatever the caller asked for. Verified before changing it: asked for c, a, b
+  and got a, b, c.
+
+  ⚠️ It failed SILENTLY — Status 1, "Photos reordered." — which is why it
+  survived 3C's suite and a whole phase. The list came back in the old order and
+  looked like a UI bug.
+
+  bigint, because PhotoId is bigint. IntIdList is int, so a large id would have
+  been truncated into a different photo's.
+------------------------------------------------------------------------------*/
+IF TYPE_ID(N'dbo.OrderedIdList') IS NULL
+BEGIN
+    PRINT '    Creating table type [OrderedIdList] ...';
+
+    CREATE TYPE dbo.OrderedIdList AS TABLE
+    (
+        Id       bigint NOT NULL PRIMARY KEY,
+        Position int    NOT NULL
+    );
+END
+GO
+
+
 /*==============================================================================
   USP_SaveSchoolPhotos
 
@@ -202,25 +234,30 @@ GO
   leaves an orphaned file on disk, and re-adding it later is a new upload rather
   than a revived row.
 
-  So this is three explicit operations rather than a diff:
+  So this is four explicit operations rather than a diff:
       @Action = 'ADD'      one new photo
-      @Action = 'REORDER'  DisplayOrder from the supplied list's order
+      @Action = 'REORDER'  DisplayOrder from the supplied POSITIONS
+      @Action = 'CAPTION'  retitle one photo, touching nothing else
       @Action = 'DELETE'   soft-delete one photo
 
   The caller says what it means. A diff would have had to infer "this file is
   gone" from its absence, which is the same shape as inferring a deletion from a
   failed upload.
+
+  ⚠️ CAPTION is separate from ADD (3F). A caption is edited far more often than
+  a photo is uploaded — somebody fixes a typo — and folding it into ADD would
+  mean re-uploading a file to change a line of text.
 ==============================================================================*/
 CREATE OR ALTER PROCEDURE dbo.USP_SaveSchoolPhotos
     @SchoolId       bigint,
     @UserUid        uniqueidentifier,
     @Action         varchar(20),
-    @PhotoId        bigint         = NULL,
-    @BranchId       bigint         = NULL,
-    @FilePath       nvarchar(500)  = NULL,
-    @Caption        nvarchar(250)  = NULL,
-    @PhotoOrder     dbo.IntIdList  READONLY,
-    @ActionByUserId bigint         = NULL
+    @PhotoId        bigint            = NULL,
+    @BranchId       bigint            = NULL,
+    @FilePath       nvarchar(500)     = NULL,
+    @Caption        nvarchar(250)     = NULL,
+    @PhotoOrder     dbo.OrderedIdList READONLY,
+    @ActionByUserId bigint            = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -236,11 +273,11 @@ BEGIN
         SELECT @Code = 'NOT_FOUND', @Message = N'That school was not found.';
     ELSE IF dbo.fn_IsSchoolMember(@SchoolId, @UserUid) = 0
         SELECT @Code = 'NOT_FOUND', @Message = N'That school was not found.';
-    ELSE IF @Action NOT IN ('ADD', 'REORDER', 'DELETE')
+    ELSE IF @Action NOT IN ('ADD', 'REORDER', 'CAPTION', 'DELETE')
         SELECT @Code = 'VALIDATION_FAILED', @Message = N'That action is not recognised.';
     ELSE IF @Action = 'ADD' AND ISNULL(@FilePath, N'') = N''
         SELECT @Code = 'VALIDATION_FAILED', @Message = N'The photo file is required.';
-    ELSE IF @Action IN ('DELETE') AND @PhotoId IS NULL
+    ELSE IF @Action IN ('DELETE', 'CAPTION') AND @PhotoId IS NULL
         SELECT @Code = 'VALIDATION_FAILED', @Message = N'Which photo?';
     ELSE IF @Action = 'ADD' AND @BranchId IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM dbo.fn_VisibleBranches(@SchoolId, @UserUid) v
@@ -279,29 +316,58 @@ BEGIN
                 SET @Id = @PhotoId;
                 SELECT @Status = 1, @Message = N'Photo removed.';
             END
+            ELSE IF @Action = 'CAPTION'
+            BEGIN
+                /*
+                  Only the caption. Not the file, not the branch, not the order.
+
+                  ⚠️ Compute-compare-write, like every other save since 2.54: a
+                  caption saved unchanged writes nothing, so ModifiedOn keeps
+                  meaning "somebody edited this".
+                */
+                SET @Caption = NULLIF(LTRIM(RTRIM(@Caption)), N'');
+
+                UPDATE dbo.t_app_school_photos
+                   SET Caption    = @Caption,
+                       ModifiedOn = @Now,
+                       ModifiedBy = @ActionByUserId
+                 WHERE PhotoId = @PhotoId
+                   AND SchoolId = @SchoolId
+                   AND Is_Deleted = 0
+                   AND (   (Caption IS NULL     AND @Caption IS NOT NULL)
+                        OR (Caption IS NOT NULL AND @Caption IS NULL)
+                        OR (Caption <> @Caption));
+
+                SET @Id = @PhotoId;
+                SELECT @Status = 1, @Message = N'Caption saved.';
+            END
             ELSE  -- REORDER
             BEGIN
                 /*
-                  DisplayOrder comes from the ORDER OF THE SUPPLIED LIST, and a
-                  table type has no inherent order — so the position is taken
-                  from the Id values themselves via ROW_NUMBER over the caller's
-                  sequence, which for a reorder IS the photo id list in the new
-                  order.
+                  🔴 THE POSITION COMES FROM THE CALLER, NOT FROM THE ID.
+
+                  This previously derived the position with ROW_NUMBER() OVER
+                  (ORDER BY i.Id) — which sorts by the photo's identity, so the
+                  result was always insertion order and the caller's chosen
+                  order was discarded. It reported success while doing nothing,
+                  which is how it survived a phase: the list came back unchanged
+                  and read as a UI bug.
+
+                  Now the order is a value the caller sends (dbo.OrderedIdList),
+                  because an ordering that cannot be expressed cannot be honoured.
 
                   ⚠️ Only photos of THIS school are touched; an id from another
                   school in the list is ignored rather than reordered.
                 */
-                WITH ordered AS (
-                    SELECT i.Id AS PhotoId, ROW_NUMBER() OVER (ORDER BY i.Id) AS Position
-                    FROM @PhotoOrder i
-                )
                 UPDATE p
-                   SET p.DisplayOrder = o.Position,
+                   SET p.DisplayOrder = i.Position,
                        p.ModifiedOn   = @Now,
                        p.ModifiedBy   = @ActionByUserId
                 FROM dbo.t_app_school_photos p
-                    INNER JOIN ordered o ON o.PhotoId = p.PhotoId
-                WHERE p.SchoolId = @SchoolId AND p.Is_Deleted = 0;
+                    INNER JOIN @PhotoOrder i ON i.Id = p.PhotoId
+                WHERE p.SchoolId = @SchoolId
+                  AND p.Is_Deleted = 0
+                  AND p.DisplayOrder <> i.Position;   -- a no-op reorder writes nothing
 
                 SELECT @Status = 1, @Message = N'Photos reordered.';
             END
@@ -327,6 +393,61 @@ BEGIN
     END
 
     SELECT @Status AS Status, @Code AS Code, @Message AS Message, @Id AS Id;
+END
+GO
+
+
+/*==============================================================================
+  USP_GetSchoolPhotoPath   one photo's stored path
+  USP_GetSchoolLogoPath    the school's logo path
+
+  ---------------------------------------------------------------------------
+  🔴 WHY THESE EXIST: NOTHING COULD DISPLAY AN UPLOADED IMAGE
+  ---------------------------------------------------------------------------
+  Uploads land under App_Data, which is NOT served statically and must never be
+  — the same folder holds teacher resumes and registration documents, and a
+  static handler over it would publish every one of them.
+
+  So a photo has always had a FilePath and no way to fetch the bytes. It did not
+  show up until 3F built a gallery, because until then nothing tried to render
+  one.
+
+  Each returns the path ONLY if the caller belongs to the school. The API turns
+  a null into a 404 — never a 403, which would confirm that a photo exists.
+
+  ⚠️ The path is not a URL and never reaches the browser: the API resolves it
+  inside the storage root and streams the bytes. A client that could name a path
+  could name any path.
+==============================================================================*/
+CREATE OR ALTER PROCEDURE dbo.USP_GetSchoolPhotoPath
+    @PhotoId bigint,
+    @UserUid uniqueidentifier
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT p.FilePath, p.SchoolId
+    FROM dbo.t_app_school_photos p
+    WHERE p.PhotoId = @PhotoId
+      AND p.Is_Deleted = 0
+      AND dbo.fn_IsSchoolMember(p.SchoolId, @UserUid) = 1;
+END
+GO
+
+
+CREATE OR ALTER PROCEDURE dbo.USP_GetSchoolLogoPath
+    @SchoolId bigint,
+    @UserUid  uniqueidentifier
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT s.LogoPath, s.SchoolId
+    FROM dbo.t_app_schools s
+    WHERE s.SchoolId = @SchoolId
+      AND s.Is_Deleted = 0
+      AND s.LogoPath IS NOT NULL
+      AND dbo.fn_IsSchoolMember(s.SchoolId, @UserUid) = 1;
 END
 GO
 
