@@ -21,6 +21,30 @@ public interface ITeacherProfileService
     Task<long> SaveDocumentAsync(int documentTypeId, Stream content, string fileName, ClaimsPrincipal caller, CancellationToken cancellationToken);
     Task DeleteDocumentAsync(long documentId, ClaimsPrincipal caller, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Opens one of the CALLER'S OWN files — their photo, their resume, one of
+    /// their documents.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 Uploads live under App_Data, which is not served statically and must
+    /// never be: that root holds every resume in the system. So the bytes are
+    /// streamed here, and the teacher is resolved from the token — there is no
+    /// parameter for whose file it is.
+    /// </para>
+    /// <para>
+    /// ⚠️ This is NOT how a school reads a resume. That is
+    /// <c>GET /api/teachers/{uid}/contact</c>, gated on the teacher having
+    /// applied or accepted an invite (2.56, LOCKED). A school has no
+    /// t_app_teachers row, so every one of these returns nothing for them.
+    /// </para>
+    /// </remarks>
+    Task<(Stream Content, string ContentType)> OpenPhotoAsync(ClaimsPrincipal caller, CancellationToken cancellationToken);
+
+    Task<(Stream Content, string ContentType)> OpenResumeAsync(ClaimsPrincipal caller, CancellationToken cancellationToken);
+
+    Task<(Stream Content, string ContentType)> OpenDocumentAsync(long documentId, ClaimsPrincipal caller, CancellationToken cancellationToken);
+
     Task SaveSubjectsAsync(SaveIdSetRequest request, ClaimsPrincipal caller, CancellationToken cancellationToken);
     Task SaveClassLevelsAsync(SaveIdSetRequest request, ClaimsPrincipal caller, CancellationToken cancellationToken);
     Task SaveSkillsAsync(SaveIdSetRequest request, ClaimsPrincipal caller, CancellationToken cancellationToken);
@@ -130,6 +154,65 @@ internal sealed class TeacherProfileService : ITeacherProfileService
         (await _teachers.SaveResumeAsync(caller.GetUserUid(), path, cancellationToken)
             .ConfigureAwait(false)).EnsureSuccess();
     }
+
+    public async Task<(Stream Content, string ContentType)> OpenPhotoAsync(
+        ClaimsPrincipal caller, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        var path = await _teachers.GetPhotoPathAsync(caller.GetUserUid(), cancellationToken)
+                       .ConfigureAwait(false)
+                   ?? throw new NotFoundException("You have not added a photo yet.");
+
+        return (await _storage.OpenReadAsync(path, cancellationToken).ConfigureAwait(false), ContentTypeFor(path));
+    }
+
+    public async Task<(Stream Content, string ContentType)> OpenResumeAsync(
+        ClaimsPrincipal caller, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        var path = await _teachers.GetResumePathAsync(caller.GetUserUid(), cancellationToken)
+                       .ConfigureAwait(false)
+                   ?? throw new NotFoundException("You have not uploaded a resume yet.");
+
+        return (await _storage.OpenReadAsync(path, cancellationToken).ConfigureAwait(false), ContentTypeFor(path));
+    }
+
+    public async Task<(Stream Content, string ContentType)> OpenDocumentAsync(
+        long documentId, ClaimsPrincipal caller, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        // 🔴 A document id belonging to another teacher resolves to nothing —
+        // the procedure matches it against the teacher the TOKEN resolves to.
+        // 404, not 403: a different status would confirm that it exists.
+        var path = await _teachers.GetDocumentPathAsync(documentId, caller.GetUserUid(), cancellationToken)
+                       .ConfigureAwait(false)
+                   ?? throw new NotFoundException("That document was not found.");
+
+        return (await _storage.OpenReadAsync(path, cancellationToken).ConfigureAwait(false), ContentTypeFor(path));
+    }
+
+    /// <summary>
+    /// The content type, from the extension the upload validator already allowed.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Only what the validators permit is mapped; anything else is served as
+    /// a byte stream rather than guessed at. A stored file cannot have another
+    /// extension — UploadValidator gave it its name — so a surprise here means
+    /// something else is wrong, and the conservative answer is the right one.
+    /// </remarks>
+    private static string ContentTypeFor(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".pdf" => "application/pdf",
+            ".doc" => "application/msword",
+            ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            _ => "application/octet-stream",
+        };
 
     public async Task<long> SaveDocumentAsync(
         int documentTypeId, Stream content, string fileName, ClaimsPrincipal caller, CancellationToken cancellationToken)

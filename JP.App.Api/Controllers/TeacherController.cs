@@ -66,6 +66,60 @@ public sealed class TeacherController : ControllerBase
         return Ok(ApiResponse.Success("Profile saved."));
     }
 
+    /*=========================================================================
+      THE CALLER'S OWN FILES
+
+      🔴 Added in 3H, and they are the caller's OWN — the teacher is resolved
+      from the token inside the procedure, so there is no parameter for whose
+      file it is. A file that is not yours is a 404, never a 403: a different
+      status would confirm it exists.
+
+      ⚠️ THIS IS NOT HOW A SCHOOL READS A RESUME. That is
+      GET /api/teachers/{uid}/contact, gated on the teacher having applied to
+      that school or accepted its invitation (2.56, LOCKED). A school account
+      has no t_app_teachers row, so every endpoint here returns nothing for it.
+
+      Uploads live under App_Data, which is not served statically and must never
+      be — the same root holds every resume and registration document in the
+      system.
+    =========================================================================*/
+
+    /// <summary>Your own profile photo.</summary>
+    [HttpGet("photo/file")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetPhotoFile(CancellationToken cancellationToken)
+    {
+        var (content, contentType) = await _teachers.OpenPhotoAsync(User, cancellationToken)
+            .ConfigureAwait(false);
+
+        return File(content, contentType);
+    }
+
+    /// <summary>Your own resume, so you can check what you uploaded.</summary>
+    [HttpGet("resume/file")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetResumeFile(CancellationToken cancellationToken)
+    {
+        var (content, contentType) = await _teachers.OpenResumeAsync(User, cancellationToken)
+            .ConfigureAwait(false);
+
+        return File(content, contentType);
+    }
+
+    /// <summary>One of your own documents. Somebody else's is a 404.</summary>
+    [HttpGet("documents/{id:long}/file")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetDocumentFile(long id, CancellationToken cancellationToken)
+    {
+        var (content, contentType) = await _teachers.OpenDocumentAsync(id, User, cancellationToken)
+            .ConfigureAwait(false);
+
+        return File(content, contentType);
+    }
+
     [HttpPost("photo")]
     [RequestSizeLimit(10 * 1024 * 1024)]
     [ProducesResponseType(typeof(Response<object>), StatusCodes.Status200OK)]

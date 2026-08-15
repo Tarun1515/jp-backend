@@ -46,6 +46,21 @@ internal interface ITeacherRepository
     Task<ProcResult> UpdateProfileAsync(Guid userUid, UpdateTeacherProfileRequest request, CancellationToken cancellationToken);
 
     Task<ProcResult> SavePhotoAsync(Guid userUid, string photoPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Where the teacher's own photo, resume or document lives.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 The teacher is resolved from the token's Uid inside the procedure, so
+    /// there is no parameter for whose file it is — 'somebody else's' cannot be
+    /// expressed. Null means no file, or not yours; the API turns both into a
+    /// 404 (3H).
+    /// </remarks>
+    Task<string?> GetPhotoPathAsync(Guid userUid, CancellationToken cancellationToken);
+
+    Task<string?> GetResumePathAsync(Guid userUid, CancellationToken cancellationToken);
+
+    Task<string?> GetDocumentPathAsync(long documentId, Guid userUid, CancellationToken cancellationToken);
     Task<ProcResult> SaveResumeAsync(Guid userUid, string resumePath, CancellationToken cancellationToken);
 
     Task<ProcResult> SaveDocumentAsync(Guid userUid, int documentTypeId, string filePath, string fileName, int fileSizeKb, string mimeType, CancellationToken cancellationToken);
@@ -211,6 +226,31 @@ internal sealed class TeacherRepository : BaseRepository, ITeacherRepository
         p.Add("@AboutMe", request.AboutMe, DbType.String, size: -1);
 
         return QuerySingleAsync<ProcResult>("USP_UpdateTeacherProfile", p, cancellationToken);
+    }
+
+    public Task<string?> GetPhotoPathAsync(Guid userUid, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@UserUid", userUid, DbType.Guid);
+
+        return QueryFirstOrDefaultAsync<string>("USP_GetTeacherPhotoPath", p, cancellationToken);
+    }
+
+    public Task<string?> GetResumePathAsync(Guid userUid, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@UserUid", userUid, DbType.Guid);
+
+        return QueryFirstOrDefaultAsync<string>("USP_GetTeacherResumePath", p, cancellationToken);
+    }
+
+    public Task<string?> GetDocumentPathAsync(long documentId, Guid userUid, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@DocumentId", documentId, DbType.Int64);
+        p.Add("@UserUid", userUid, DbType.Guid);
+
+        return QueryFirstOrDefaultAsync<string>("USP_GetTeacherDocumentPath", p, cancellationToken);
     }
 
     public Task<ProcResult> SavePhotoAsync(Guid userUid, string photoPath, CancellationToken cancellationToken)

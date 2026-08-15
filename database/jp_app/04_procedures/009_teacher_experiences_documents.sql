@@ -311,5 +311,80 @@ BEGIN
 END
 GO
 
+
+/*==============================================================================
+  USP_GetTeacherPhotoPath      the teacher's own photo
+  USP_GetTeacherResumePath     the teacher's own resume
+  USP_GetTeacherDocumentPath   one of the teacher's own documents
+
+  ---------------------------------------------------------------------------
+  🔴 THE TEACHER'S OWN, AND NOBODY ELSE'S. NOT EVEN A LITTLE.
+  ---------------------------------------------------------------------------
+  Every one of these resolves the teacher from @UserUid through
+  fn_TeacherIdForUser and matches the row against THAT id. There is no parameter
+  for whose file it is, so "somebody else's" cannot be expressed — the same shape
+  3D gave every teacher write, verified against sys.parameters.
+
+  ⚠️ THE RESUME ESPECIALLY. A resume carries an email and a mobile number in its
+  first three lines, so it IS a contact detail (2.56, LOCKED). A school reaches a
+  teacher's resume through GET /api/teachers/{uid}/contact after that teacher has
+  applied or accepted an invite — never through here. A school user has no
+  t_app_teachers row at all, so fn_TeacherIdForUser gives NULL and this returns
+  nothing.
+
+  ---------------------------------------------------------------------------
+  WHY THEY EXIST — added in 3H, the same gap 3F found on the school side
+  ---------------------------------------------------------------------------
+  Uploads live under App_Data, which is not served statically and must never be:
+  that root holds every resume and every registration document in the system. So
+  the bytes are streamed by the API, and until something tried to RENDER a
+  teacher's photo, nothing had noticed there was no way to fetch one.
+
+  Target: SQL Server 2019 (15.0).
+==============================================================================*/
+CREATE OR ALTER PROCEDURE dbo.USP_GetTeacherPhotoPath
+    @UserUid uniqueidentifier
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT t.PhotoPath
+    FROM dbo.t_app_teachers t
+    WHERE t.TeacherId = dbo.fn_TeacherIdForUser(@UserUid)
+      AND t.PhotoPath IS NOT NULL;
+END
+GO
+
+
+CREATE OR ALTER PROCEDURE dbo.USP_GetTeacherResumePath
+    @UserUid uniqueidentifier
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT t.ResumePath
+    FROM dbo.t_app_teachers t
+    WHERE t.TeacherId = dbo.fn_TeacherIdForUser(@UserUid)
+      AND t.ResumePath IS NOT NULL;
+END
+GO
+
+
+CREATE OR ALTER PROCEDURE dbo.USP_GetTeacherDocumentPath
+    @DocumentId bigint,
+    @UserUid    uniqueidentifier
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT d.FilePath
+    FROM dbo.t_app_teacher_documents d
+    WHERE d.DocumentId = @DocumentId
+      AND d.Is_Deleted = 0
+      -- 🔴 The gate. A document id from another teacher matches nothing.
+      AND d.TeacherId = dbo.fn_TeacherIdForUser(@UserUid);
+END
+GO
+
 PRINT '    Teacher experience and document procedures ready.';
 GO
