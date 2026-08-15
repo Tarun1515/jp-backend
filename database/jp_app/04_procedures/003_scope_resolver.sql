@@ -181,6 +181,22 @@ GO
   eventually will have them — and a procedure that returned TOP 1 would answer
   that question arbitrarily rather than making the caller face it.
 
+  ---------------------------------------------------------------------------
+  🔴 INACTIVE MEMBERSHIPS COME BACK TOO, FLAGGED — CHANGED IN 3G
+  ---------------------------------------------------------------------------
+  This used to filter on Is_Active = 1, which meant somebody whose access had
+  been REMOVED looked identical to somebody who never had any. The API then told
+  them "your account is not linked to a school yet — if you have just been
+  approved, sign out and back in", and they would do exactly that, repeatedly,
+  and then call the school.
+
+  3G made that state reachable on purpose (USP_DeactivateSchoolUser), so the
+  difference has to survive the trip: the caller filters on IsActive and has a
+  different sentence for each case.
+
+  ⚠️ No disclosure in returning it — this is the caller's own membership, and
+  they are the one person already entitled to know it was taken away.
+
   Ordered by school name so "the first one" is at least stable.
 ==============================================================================*/
 CREATE OR ALTER PROCEDURE dbo.USP_GetSchoolsForUser
@@ -192,13 +208,15 @@ BEGIN
     SELECT
         s.SchoolId,
         s.SchoolName,
-        su.RoleInSchool
+        su.RoleInSchool,
+        su.Is_Active AS IsActive
     FROM dbo.t_app_school_users su
         INNER JOIN dbo.t_app_schools s
             ON s.SchoolId = su.SchoolId AND s.Is_Deleted = 0
     WHERE su.UserUid    = @UserUid
-      AND su.Is_Active  = 1
       AND su.Is_Deleted = 0
-    ORDER BY s.SchoolName;
+    -- Active first, so a caller taking "the first one" without reading the flag
+    -- at least gets a working membership rather than a revoked one.
+    ORDER BY su.Is_Active DESC, s.SchoolName;
 END
 GO

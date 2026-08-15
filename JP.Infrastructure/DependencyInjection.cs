@@ -130,6 +130,13 @@ public static class DependencyInjection
         services.AddScoped<ITeacherDirectoryService, TeacherDirectoryService>();
         services.AddScoped<ITeacherProvisioningService, TeacherProvisioningService>();
 
+        // ---- Phase 3G: school team --------------------------------------
+        // ⚠️ SchoolTeamService writes to jp_app AND jp_sso, so it depends on
+        // repositories for both. That is the shape decision 2.2 requires: two
+        // connections, two commits, and the orchestration in the API layer.
+        services.AddScoped<ISchoolTeamRepository, SchoolTeamRepository>();
+        services.AddScoped<ISchoolTeamService, SchoolTeamService>();
+
         // Public service interfaces — the boundary the API talks to.
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserService, UserService>();

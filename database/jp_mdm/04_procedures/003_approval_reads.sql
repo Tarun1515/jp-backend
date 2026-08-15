@@ -46,6 +46,28 @@ CREATE OR ALTER PROCEDURE dbo.USP_GetApprovalRequestList
     @RequestTypeId      int              = NULL,
     @StatusId           int              = NULL,
     @AssignedToUserId   bigint           = NULL,
+
+    /*
+      🔴 "NOBODY HAS PICKED THIS UP" — G15, CLOSED IN 3G.
+
+      @AssignedToUserId cannot express it. NULL there means "do not filter by
+      assignee", so the one question a person clearing a backlog actually asks —
+      WHAT IS NOBODY WORKING ON? — had no way through this procedure at all,
+      and the screen offered a single "assigned to me" checkbox instead.
+
+      It needs its own flag precisely because NULL is already taken. Two
+      parameters for one control is a combination waiting to be sent wrong, so
+      the API refuses a request that sets both rather than quietly resolving it;
+      if one ever arrives anyway, unassigned wins and the id is ignored.
+
+      ⚠️ ApproverUserId is stamped when somebody ACTS on a request
+      (002_approval_action), not when they open it. So "unassigned" here means
+      "nobody has acted yet", which for a pending request is the same thing —
+      and if this system ever gains a real claim-a-request step, this filter is
+      the one that has to change with it.
+    */
+    @UnassignedOnly     bit              = 0,
+
     @OrganizationUid    uniqueidentifier = NULL,
     @Search             nvarchar(150)    = NULL,
     @FromDate           date             = NULL,   -- IST calendar date
@@ -128,7 +150,8 @@ BEGIN
     WHERE r.Is_Deleted = 0
       AND (@RequestTypeId    IS NULL OR r.RequestTypeId   = @RequestTypeId)
       AND (@StatusId         IS NULL OR r.StatusId        = @StatusId)
-      AND (@AssignedToUserId IS NULL OR r.ApproverUserId  = @AssignedToUserId)
+      AND (@UnassignedOnly = 0 OR r.ApproverUserId IS NULL)
+      AND (@UnassignedOnly = 1 OR @AssignedToUserId IS NULL OR r.ApproverUserId = @AssignedToUserId)
       AND (@OrganizationUid  IS NULL OR r.OrganizationUid = @OrganizationUid)
       AND (@FromUtc          IS NULL OR r.SubmittedOn    >= @FromUtc)
       AND (@ToUtc            IS NULL OR r.SubmittedOn     < @ToUtc)
@@ -181,7 +204,11 @@ BEGIN
     WHERE r.Is_Deleted = 0
       AND (@RequestTypeId    IS NULL OR r.RequestTypeId   = @RequestTypeId)
       AND (@StatusId         IS NULL OR r.StatusId        = @StatusId)
-      AND (@AssignedToUserId IS NULL OR r.ApproverUserId  = @AssignedToUserId)
+      -- 🔴 The same two lines as the page above. They have to agree exactly, or
+      -- the pager reports a total for a different question than the one the
+      -- rows answer — 40 results, three pages, page two empty.
+      AND (@UnassignedOnly = 0 OR r.ApproverUserId IS NULL)
+      AND (@UnassignedOnly = 1 OR @AssignedToUserId IS NULL OR r.ApproverUserId = @AssignedToUserId)
       AND (@OrganizationUid  IS NULL OR r.OrganizationUid = @OrganizationUid)
       AND (@FromUtc          IS NULL OR r.SubmittedOn    >= @FromUtc)
       AND (@ToUtc            IS NULL OR r.SubmittedOn     < @ToUtc)

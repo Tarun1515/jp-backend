@@ -187,7 +187,42 @@ public sealed class ApprovalRequestFilter : PagedRequest
 {
     public int? RequestTypeId { get; set; }
     public int? StatusId { get; set; }
-    public long? AssignedToUserId { get; set; }
+
+    /// <summary>
+    /// One administrator's work. Null means "do not filter by assignee".
+    /// </summary>
+    /// <remarks>
+    /// 🔴 A Uid, not the bigint id the column holds — changed in 3G.
+    ///
+    /// <c>t_mdm_approval_requests.ApproverUserId</c> is a jp_sso UserId, and
+    /// jp_mdm cannot resolve one from a Uid (2.2). The old contract therefore
+    /// forced a client to know the numeric id, which only ever worked for the
+    /// caller's own — hence a queue whose assignee filter could say "me" and
+    /// nothing else (G15).
+    ///
+    /// The service resolves this against jp_sso and passes the id down: the
+    /// cross-database join in the API layer, where it belongs, rather than a
+    /// numeric key leaking into a URL.
+    /// </remarks>
+    public Guid? AssignedToUserUid { get; set; }
+
+    /// <summary>
+    /// Only requests nobody has picked up. G15, closed in 3G.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 It needs its own field because null on <see cref="AssignedToUserUid"/>
+    /// is already taken: it means "any assignee", so the one question a person
+    /// clearing a backlog actually asks — what is nobody working on? — could not
+    /// be expressed at all.
+    /// </para>
+    /// <para>
+    /// ⚠️ Setting both is refused rather than silently resolved. They are one
+    /// control on the screen and a request carrying both means the client is
+    /// confused about what it is asking; picking a winner would hide that.
+    /// </para>
+    /// </remarks>
+    public bool UnassignedOnly { get; set; }
 
     /// <summary>IST calendar date, converted to a UTC range in SQL (2.28).</summary>
     public DateOnly? FromDate { get; set; }

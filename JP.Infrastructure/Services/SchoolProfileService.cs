@@ -112,8 +112,33 @@ internal sealed class SchoolProfileService : ISchoolProfileService
             throw new ForbiddenException("This is a school area. Your account is not a school account.");
         }
 
-        var memberships = await _schools.GetMembershipsAsync(caller.GetUserUid(), cancellationToken)
+        var all = await _schools.GetMembershipsAsync(caller.GetUserUid(), cancellationToken)
             .ConfigureAwait(false);
+
+        var memberships = all.Where(m => m.IsActive == 1).ToList();
+
+        /*
+          🔴 "YOUR ACCESS WAS REMOVED" IS NOT "YOU WERE NEVER ADDED".
+
+          3G made the first state reachable: a school owner can now take a
+          colleague off the team, which leaves a working account with an inactive
+          membership. Before this branch existed they got the message below —
+          "if you have just been approved, sign out and back in" — which is
+          written for somebody waiting to be let IN, and which they would follow,
+          twice, before calling the school.
+
+          The same shape of bug 3E found for teachers, one state over.
+        */
+        if (memberships.Count == 0 && all.Count > 0)
+        {
+            _logger.LogInformation(
+                "User {UserUid} reached a school endpoint with {Count} membership(s), all revoked.",
+                caller.GetUserUid(), all.Count);
+
+            throw new ForbiddenException(
+                "Your access to this school has been removed. If that is not what you expected, ask whoever " +
+                "manages your school's team to add you back.");
+        }
 
         if (memberships.Count == 0)
         {

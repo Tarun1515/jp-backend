@@ -13,7 +13,7 @@ internal interface IApprovalRepository
 {
     Task<SubmitProcResult> SubmitAsync(SubmitApprovalRequest request, Guid? organizationUid, long requestorUserId, string? ipAddress, CancellationToken cancellationToken);
 
-    Task<(IReadOnlyList<ApprovalRequestRow> Rows, long Total)> ListAsync(ApprovalRequestFilter filter, Guid? organizationUid, CancellationToken cancellationToken);
+    Task<(IReadOnlyList<ApprovalRequestRow> Rows, long Total)> ListAsync(ApprovalRequestFilter filter, Guid? organizationUid, long? assignedToUserId, CancellationToken cancellationToken);
 
     Task<ApprovalRequestDetailDto?> GetByIdAsync(long requestId, CancellationToken cancellationToken);
 
@@ -152,6 +152,7 @@ internal sealed class ApprovalRepository : BaseRepository, IApprovalRepository
     public Task<(IReadOnlyList<ApprovalRequestRow> Rows, long Total)> ListAsync(
         ApprovalRequestFilter filter,
         Guid? organizationUid,
+        long? assignedToUserId,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(filter);
@@ -159,7 +160,11 @@ internal sealed class ApprovalRepository : BaseRepository, IApprovalRepository
         var p = new DynamicParameters();
         p.Add("@RequestTypeId", filter.RequestTypeId, DbType.Int32);
         p.Add("@StatusId", filter.StatusId, DbType.Int32);
-        p.Add("@AssignedToUserId", filter.AssignedToUserId, DbType.Int64);
+
+        // ⚠️ Resolved by the service from filter.AssignedToUserUid, because
+        // jp_mdm stores the bigint jp_sso id and cannot look one up (2.2).
+        p.Add("@AssignedToUserId", assignedToUserId, DbType.Int64);
+        p.Add("@UnassignedOnly", filter.UnassignedOnly, DbType.Boolean);
         p.Add("@OrganizationUid", organizationUid, DbType.Guid);
         p.Add("@Search", filter.Search, DbType.String, size: 150);
         p.Add("@FromDate", filter.FromDate?.ToDateTime(TimeOnly.MinValue), DbType.Date);

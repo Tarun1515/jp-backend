@@ -389,6 +389,44 @@ internal sealed class UserRepository : BaseRepository, IUserRepository
         }, p, cancellationToken);
     }
 
+    public Task<IReadOnlyList<UserContactRow>> GetUsersByUidsAsync(
+        IReadOnlyCollection<Guid> userUids, Guid organizationUid, CancellationToken cancellationToken)
+    {
+        /*
+          No round trip for an empty list. A school whose team is somehow empty
+          would otherwise send a table-valued parameter with no rows to ask a
+          question whose answer is already known.
+        */
+        if (userUids is null || userUids.Count == 0)
+        {
+            return Task.FromResult<IReadOnlyList<UserContactRow>>([]);
+        }
+
+        var table = new DataTable();
+        table.Columns.Add("Id", typeof(Guid));
+
+        foreach (var uid in userUids.Distinct())
+        {
+            table.Rows.Add(uid);
+        }
+
+        var p = new DynamicParameters();
+        p.Add("@UserUids", table.AsTableValuedParameter("dbo.GuidIdList"));
+        p.Add("@OrganizationUid", organizationUid, DbType.Guid);
+
+        return QueryAsync<UserContactRow>("USP_GetUsersByUids", p, cancellationToken);
+    }
+
+    public Task<UserIdentityRow?> GetUserByEmailAsync(
+        string email, Guid organizationUid, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@Email", email, DbType.String, size: 150);
+        p.Add("@OrganizationUid", organizationUid, DbType.Guid);
+
+        return QueryFirstOrDefaultAsync<UserIdentityRow>("USP_GetUserByEmail", p, cancellationToken);
+    }
+
     public Task<ProcResult> AssignUserRoleAsync(
         Guid userUid, string roleCode, Guid? organizationUid, long assignedByUserId,
         CancellationToken cancellationToken)

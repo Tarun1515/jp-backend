@@ -86,6 +86,31 @@ internal interface IUserRepository
     Task<(IReadOnlyList<UserListRow> Items, long Total)> GetUserListAsync(UserListRequest request,
         Guid? organizationUid, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The accounts behind a list of Uids, within one organisation.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 The API half of a join no query is allowed to write (2.2). A school's
+    /// team screen has the membership rows from jp_app and needs the email
+    /// address that goes with each, which lives here.
+    ///
+    /// Organisation-scoped in the procedure as well, so a Uid from anywhere else
+    /// simply does not come back.
+    /// </remarks>
+    Task<IReadOnlyList<UserContactRow>> GetUsersByUidsAsync(IReadOnlyCollection<Guid> userUids,
+        Guid organizationUid, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// One account, by exact address, within one organisation.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ This exists for the invitation RETRY path. When the account was created
+    /// and the membership write then failed, re-inviting hits DUPLICATE_EMAIL
+    /// forever unless the caller can find the account it already made.
+    /// </remarks>
+    Task<UserIdentityRow?> GetUserByEmailAsync(string email, Guid organizationUid,
+        CancellationToken cancellationToken);
+
     Task<ProcResult> AssignUserRoleAsync(Guid userUid, string roleCode, Guid? organizationUid,
         long assignedByUserId, CancellationToken cancellationToken);
 }

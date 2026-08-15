@@ -58,17 +58,20 @@ internal sealed class ApprovalService : IApprovalService
         new("^[A-Z]{5}[0-9]{4}[A-Z]$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private readonly IApprovalRepository _repository;
+    private readonly IUserRepository _users;
     private readonly IProvisioningRepository _provisioning;
     private readonly IApprovalOrchestrationService _orchestration;
     private readonly ILogger<ApprovalService> _logger;
 
     public ApprovalService(
         IApprovalRepository repository,
+        IUserRepository users,
         IProvisioningRepository provisioning,
         IApprovalOrchestrationService orchestration,
         ILogger<ApprovalService> logger)
     {
         _repository = repository;
+        _users = users;
         _provisioning = provisioning;
         _orchestration = orchestration;
         _logger = logger;
@@ -133,7 +136,50 @@ internal sealed class ApprovalService : IApprovalService
             ? null
             : (Guid?)caller.RequireOrganizationUid();
 
-        var (rows, total) = await _repository.ListAsync(filter, scope, cancellationToken)
+        /*
+          ⚠️ "Unassigned" and "assigned to somebody" are one control on the
+          screen, so a request carrying both is a client that has lost track of
+          what it is asking. Refused rather than resolved: picking a winner
+          would return a plausible page for a question nobody asked, and the
+          person would act on it.
+        */
+        if (filter.UnassignedOnly && filter.AssignedToUserUid is not null)
+        {
+            throw new BusinessRuleException(
+                "Ask for unassigned requests or for one administrator's, not both.",
+                ErrorCodes.ValidationFailed);
+        }
+
+        /*
+          🔴 THE CROSS-DATABASE JOIN, IN THE ONE PLACE IT IS ALLOWED (2.2).
+
+          jp_mdm stores the assignee as a jp_sso UserId and cannot resolve one
+          from a Uid, so the API does it: a Uid comes in from the client, an id
+          goes down to the procedure.
+
+          ⚠️ An unknown Uid resolves to -1 rather than to null. Null means "any
+          assignee", so a typo or a deleted account would silently widen the
+          filter to the whole queue — a filter that fails OPEN is worse than one
+          that returns nothing, because the page still looks like an answer.
+        */
+        long? assignedToUserId = null;
+
+        if (filter.AssignedToUserUid is { } assigneeUid)
+        {
+            var (assignee, _) = await _users.GetUserByUidAsync(assigneeUid, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (assignee is null)
+            {
+                _logger.LogWarning(
+                    "Queue filtered by assignee {UserUid}, which has no account. Returning nothing rather than " +
+                    "everything.", assigneeUid);
+            }
+
+            assignedToUserId = assignee?.UserId ?? -1;
+        }
+
+        var (rows, total) = await _repository.ListAsync(filter, scope, assignedToUserId, cancellationToken)
             .ConfigureAwait(false);
 
         return new PagedResult<ApprovalRequestListItemDto>(

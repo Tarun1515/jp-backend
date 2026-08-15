@@ -157,6 +157,10 @@ GO
 :r $(DbRoot)\jp_sso\04_procedures\006_admin.sql
 :r $(DbRoot)\jp_sso\04_procedures\007_lists.sql
 :r $(DbRoot)\jp_sso\04_procedures\008_menus.sql
+
+-- Phase 3G. The cross-database join the team screen needs: jp_app holds the
+-- membership, jp_sso holds the email, and no query may join the two (2.2).
+:r $(DbRoot)\jp_sso\04_procedures\009_users_by_uid.sql
 :r $(DbRoot)\jp_sso\04_procedures\009_identity_lookup.sql
 
 
@@ -291,6 +295,9 @@ GO
 :r $(DbRoot)\jp_app\01_tables\017_t_app_teacher_documents.sql
 :r $(DbRoot)\jp_app\01_tables\018_t_app_teacher_experiences.sql
 
+-- Phase 3G. A team list identified only by email address is unreadable.
+:r $(DbRoot)\jp_app\01_tables\019_alter_t_app_school_users_fullname.sql
+
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
 -- shapes the schema. It is listed here so a database rebuilt from scratch ends
@@ -326,6 +333,9 @@ GO
 :r $(DbRoot)\jp_app\04_procedures\008_teacher_bridges.sql
 :r $(DbRoot)\jp_app\04_procedures\009_teacher_experiences_documents.sql
 :r $(DbRoot)\jp_app\04_procedures\010_teacher_public_profile.sql
+
+-- Phase 3G — school team management.
+:r $(DbRoot)\jp_app\04_procedures\011_school_team.sql
 
 
 /*==============================================================================

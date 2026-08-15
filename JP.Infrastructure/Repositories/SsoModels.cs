@@ -305,6 +305,28 @@ internal sealed class MenuRow
 }
 
 /// <summary>Identity fields for a user keyed by numeric id (USP_GetUserIdentity).</summary>
+/// <summary>
+/// The jp_sso half of a team member: how to reach them, and whether their
+/// account is usable yet.
+/// </summary>
+/// <remarks>
+/// ⚠️ Identity only. No hash, no salt, no token, no failed-attempt count —
+/// this feeds a team list, and nothing about how somebody signs in belongs in
+/// one.
+/// </remarks>
+internal sealed class UserContactRow
+{
+    public Guid UserUid { get; set; }
+    public string Email { get; set; } = string.Empty;
+    public string? Mobile { get; set; }
+    public int StatusId { get; set; }
+    public string StatusCode { get; set; } = string.Empty;
+    public string StatusName { get; set; } = string.Empty;
+    public bool IsEmailVerified { get; set; }
+    public DateTime? LastLoginOn { get; set; }
+    public DateTime CreatedOn { get; set; }
+}
+
 internal sealed class UserIdentityRow
 {
     public long UserId { get; set; }

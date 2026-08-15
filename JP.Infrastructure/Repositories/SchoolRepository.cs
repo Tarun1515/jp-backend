@@ -14,6 +14,20 @@ internal sealed class SchoolMembershipRow
     public long SchoolId { get; set; }
     public string SchoolName { get; set; } = string.Empty;
     public byte RoleInSchool { get; set; }
+
+    /// <summary>
+    /// 1 while the membership is live, 0 once their access has been removed.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 REVOKED MEMBERSHIPS COME BACK TOO, AND THE CALLER MUST FILTER THEM.
+    ///
+    /// The procedure used to hide them, which made "your access was removed"
+    /// indistinguishable from "you were never added" — and the API then told
+    /// somebody whose access had just been taken away to sign out and back in,
+    /// which they would do, repeatedly. tinyint rather than bool because that is
+    /// what the column is, and Dapper maps it without a conversion.
+    /// </remarks>
+    public byte IsActive { get; set; }
 }
 
 internal interface ISchoolRepository
