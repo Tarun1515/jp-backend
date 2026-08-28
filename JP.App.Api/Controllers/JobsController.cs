@@ -69,6 +69,46 @@ public sealed class JobsController : ControllerBase
         return Ok(ApiResponse.Success(job));
     }
 
+    /// <summary>
+    /// Counts and the five most recent — the dashboard's jobs area.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 NO PARAMETERS, AND THAT IS THE SECURITY PROPERTY. SchoolId comes from
+    /// the caller's membership via the scope resolver (2.39). There is no
+    /// schoolId, branchId or organizationUid to send, so there is nothing to
+    /// forge — a query string appended by hand is simply ignored, and the
+    /// caller's own counts come back.
+    /// </para>
+    /// <para>
+    /// ⚠️ That is why the verification for this endpoint asserts IGNORED rather
+    /// than 404. A 404 is what an endpoint that TAKES an id must answer for
+    /// somebody else's id — <see cref="GetById"/> does exactly that. An
+    /// endpoint with no id has a stronger property than a correct refusal: the
+    /// question cannot be asked.
+    /// </para>
+    /// <para>
+    /// 🔴 JOB.VIEW only. A Viewer sees the dashboard, so a Viewer sees the
+    /// counts; gating a read on JOB.PUBLISH would blank the tile for the people
+    /// it exists for.
+    /// </para>
+    /// <para>
+    /// ⚠️ Added in Phase 4B. Phase 4 built the procedure, the repository and the
+    /// service method and then stopped one layer short — the dashboard could
+    /// not reach any of it. Added openly with the scope and permission rules
+    /// stated, rather than quietly.
+    /// </para>
+    /// </remarks>
+    [HttpGet("stats")]
+    [ProducesResponseType(typeof(Response<SchoolJobStatsDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetStats(CancellationToken cancellationToken)
+    {
+        var stats = await _jobs.GetStatsAsync(User, cancellationToken).ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(stats));
+    }
+
     /// <summary>Create a draft, or edit an existing job.</summary>
     /// <remarks>
     /// A job is always born a Draft — there is no "create and publish" in one

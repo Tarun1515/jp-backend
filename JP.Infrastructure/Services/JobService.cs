@@ -222,9 +222,31 @@ internal sealed class JobService : IJobService
         result.EnsureSuccess();
     }
 
+    /// <summary>
+    /// The dashboard's jobs area: counts and the five most recent.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 JOB.VIEW ONLY. Reading how many jobs exist is a read, and a Viewer
+    /// sees the dashboard — so a Viewer sees the counts. Requiring publish or
+    /// close here would blank the tile for the exact people it is written for.
+    /// </para>
+    /// <para>
+    /// ⚠️ This check was MISSING until Phase 4B. The method was built in Phase
+    /// 4 and nothing called it, so nothing exercised its authorization — which
+    /// is its own small lesson: an unreachable method is an unverified one.
+    /// </para>
+    /// <para>
+    /// 🔴 There is no school parameter, here or on the endpoint. SchoolId comes
+    /// from the caller's membership (2.39) and there is deliberately nothing to
+    /// forge — see JobsController.GetStats.
+    /// </para>
+    /// </remarks>
     public async Task<SchoolJobStatsDto> GetStatsAsync(
         ClaimsPrincipal caller, CancellationToken cancellationToken)
     {
+        Require(caller, AppConstants.PermissionCodes.JobView);
+
         var schoolId = await _schools.ResolveSchoolIdAsync(caller, cancellationToken).ConfigureAwait(false);
 
         return await _jobs.GetStatsAsync(schoolId, caller.GetUserUid(), cancellationToken)
