@@ -111,6 +111,15 @@ public static class AppConstants
     {
         public const string VerificationSchool = "VERIFICATION.SCHOOL";
         public const string VerificationTeacher = "VERIFICATION.TEACHER";
+
+        /// <summary>
+        /// Seeded in Phase 1A, held by SUPER_ADMIN alone. Phase 2.5 gates the
+        /// plan × feature matrix on it rather than seeding a new permission —
+        /// deciding what a plan includes IS a system setting, and a permission
+        /// nobody has yet would need a role grant before the screen could be
+        /// opened at all.
+        /// </summary>
+        public const string SettingsManage = "SETTINGS.MANAGE";
     }
 
     /// <summary>Seeded role codes. See DB_TABLE_STRUCTURE.md.</summary>

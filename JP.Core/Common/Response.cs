@@ -77,6 +77,31 @@ public static class ApiResponse
         Data = data,
     };
 
+    /// <summary>
+    /// A successful response that still carries a machine-readable code.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 Added in Phase 2.5 for <c>ALREADY_CONSUMED</c>, and the shape is
+    /// deliberate: a code is not the same thing as a failure.
+    ///
+    /// A retried consume finds the reference already charged and succeeds — no
+    /// second row, no second charge — but the caller still needs to know it was
+    /// a retry rather than a fresh charge. Forcing that onto the failure path
+    /// would mean a client treating "you already paid for this" as an error,
+    /// which is precisely how a customer gets charged twice by a system built
+    /// not to charge them twice.
+    ///
+    /// ⚠️ Clients must therefore branch on <c>status</c> FIRST and only then on
+    /// <c>code</c> — a code being present no longer implies failure.
+    /// </remarks>
+    public static Response<T> SuccessWithCode<T>(T data, string? code, string message = DefaultSuccessMessage) => new()
+    {
+        Status = ResponseStatus.Success,
+        Code = code,
+        Message = message,
+        Data = data,
+    };
+
     /// <summary>A successful response with no payload.</summary>
     public static Response<object?> Success(string message = DefaultSuccessMessage) => new()
     {

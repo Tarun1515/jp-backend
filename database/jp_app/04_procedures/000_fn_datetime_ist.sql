@@ -1,21 +1,36 @@
 ﻿/*==============================================================================
-  jp_sso — 000_fn_datetime_ist.sql
+  jp_app — 000_fn_datetime_ist.sql
 
-  IST/UTC helper functions. See PROJECT_MEMORY.md decision 2.28.
+  IST/UTC helper functions — jp_app's OWN copies.
 
-  ⚠️ THIS FILE IS THE MASTER. Two copies exist, and they are copies of this:
+  ⚠️ THIS IS A COPY. The master is:
 
-      database/jp_mdm/04_procedures/000_fn_datetime_ist.sql   (Phase 2A)
-      database/jp_app/04_procedures/000_fn_datetime_ist.sql   (Phase 2.5)
+      database/jp_sso/04_procedures/000_fn_datetime_ist.sql
 
-  A function cannot be called across a database boundary without a three-part
-  name, which couples the databases and breaks independent deployment (2.1,
-  2.2) — so each database carries its own. The bodies are byte-identical;
-  only the header and the USE line differ.
+  jp_mdm carries the second copy. All three hold byte-identical function
+  bodies; only the header and the USE line differ, and Phase 2.5's
+  verification diffs the definitions out of sys.sql_modules to prove it. If
+  one of these ever needs to change, all three change in the same commit.
 
-  🔴 Changing anything below means changing all three in the same commit. Two
-  databases disagreeing about when an IST day starts is a bug that surfaces as
-  a handful of rows landing in the wrong month, months later.
+  Duplicated from jp_sso deliberately. A function cannot be called across a
+  database boundary without a three-part name, which couples the databases and
+  breaks independent deployment (decisions 2.1 and 2.2). Four small
+  deterministic functions are the cheaper half of that trade.
+
+  ---------------------------------------------------------------------------
+  WHY jp_app FINALLY NEEDS THEM — PHASE 2.5
+  ---------------------------------------------------------------------------
+  The entitlement ledger lives in this database and its quota periods are IST
+  calendar months (MONETIZATION_DESIGN.md, Decision 6). Quota use is DERIVED by
+  counting consumes inside a period window rather than reset by a scheduled
+  job, so the window arithmetic runs on every consume — and it cannot call
+  jp_sso's copy without a three-part name.
+
+  jp_app has not needed these until now, which is why it did not have them.
+  That absence was found while writing the design doc, not while debugging a
+  wrong month boundary at runtime — which is the cheaper of the two ways.
+
+  See PROJECT_MEMORY.md decision 2.28.
 
   Storage is UTC everywhere. Business rules and filters are evaluated in IST,
   because every user is in India and a UTC day boundary falls at 05:30 IST —
@@ -34,7 +49,7 @@
   Target: SQL Server 2019 (15.0).
 ==============================================================================*/
 
-USE jp_sso;
+USE jp_app;
 GO
 
 -- Filtered indexes REQUIRE these. sqlcmd defaults QUOTED_IDENTIFIER to OFF

@@ -143,6 +143,28 @@ public static class DependencyInjection
         services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
         services.AddScoped<IDashboardService, DashboardService>();
 
+        /*
+          ---- Phase 2.5: the entitlement engine ---------------------------
+
+          🔴 TWO REPOSITORIES, AND NEITHER IS IMasterService.
+
+          IEntitlementRepository (jp_mdm) resolves the feature and its plan
+          mapping in one query on every consume. It is deliberately NOT the
+          master repository and must never be given a cache: an hour of lag
+          would mean the kill switch engages an hour after the operator flips
+          it, during exactly the incident it was flipped for.
+
+          IEntitlementLedgerRepository (jp_app) owns the append-only ledger.
+          Two databases that cannot join (2.2) means two repositories; the
+          service is what joins them.
+
+          ⚠️ Nothing here is gated yet — every feature seeds FREE. Phase 4
+          writes the first real consume.
+        */
+        services.AddScoped<IEntitlementRepository, EntitlementRepository>();
+        services.AddScoped<IEntitlementLedgerRepository, EntitlementLedgerRepository>();
+        services.AddScoped<IEntitlementService, EntitlementService>();
+
         // Public service interfaces — the boundary the API talks to.
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserService, UserService>();

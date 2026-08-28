@@ -123,6 +123,16 @@ VALUES
 
 ('ADMIN_USERS',             NULL, N'Users',                 1, N'/users',                 'users',            'USER.MANAGE',         40, 1, 1),
 ('ADMIN_MASTERS',           NULL, N'Master data',           1, N'/masters',               'database',         'SETTINGS.MANAGE',     50, 1, 1),
+
+/*
+  Phase 2.5 — the entitlement matrix. SETTINGS.MANAGE, held by SUPER_ADMIN
+  alone, which is the same gate the API enforces.
+
+  ⚠️ Sits beside Master data rather than under Settings: it IS master data in
+  every structural sense, and /settings is still a placeholder route. A child of
+  a coming-soon page would be a working screen hidden behind a stub.
+*/
+('ADMIN_PLANS',             NULL, N'Plans and features',    1, N'/settings/plans',        'sliders-horizontal', 'SETTINGS.MANAGE',   55, 1, 1),
 ('ADMIN_CMS',               NULL, N'CMS',                   1, N'/cms',                   'newspaper',        'CMS.MANAGE',          60, 1, 1),
 ('ADMIN_REPORTS',           NULL, N'Analytics',             1, N'/reports',               'bar-chart-3',      'REPORT.VIEW',         70, 1, 1),
 ('ADMIN_SETTINGS',          NULL, N'Settings',              1, N'/settings',              'settings',         'SETTINGS.MANAGE',     80, 1, 1),

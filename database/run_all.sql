@@ -215,6 +215,10 @@ GO
 :r $(DbRoot)\jp_mdm\01_tables\034_t_mdm_request_number_series.sql
 :r $(DbRoot)\jp_mdm\01_tables\035_m_mdm_plans.sql
 
+-- Phase 2.5 — the entitlement catalog. New tables BESIDE m_mdm_plans; 035 said
+-- monetization "is NOT here and should not be added here", and this is it.
+:r $(DbRoot)\jp_mdm\01_tables\036_entitlement_catalog.sql
+
 -- ---- indexes: access paths only. Business-key uniques live beside their table
 -- ---- in 01_tables, because a business key is part of what the table means
 -- ---- rather than a performance decision.
@@ -237,6 +241,10 @@ GO
 :r $(DbRoot)\jp_mdm\03_seed\008_seed_plans.sql
 :r $(DbRoot)\jp_mdm\03_seed\009_seed_languages.sql
 
+-- Phase 2.5. 🔴 Every feature seeds FREE and NO plan mappings are created, so
+-- shipping the engine changes nothing anyone can see.
+:r $(DbRoot)\jp_mdm\03_seed\010_seed_features.sql
+
 -- ---- programmability: IST functions first, then USP_LogError which every
 -- ---- other procedure calls from its CATCH block, then the approval engine.
 PRINT '  Functions and procedures ...';
@@ -251,6 +259,9 @@ GO
 :r $(DbRoot)\jp_mdm\04_procedures\006_reconciliation.sql
 :r $(DbRoot)\jp_mdm\04_procedures\007_registration_drafts.sql
 :r $(DbRoot)\jp_mdm\04_procedures\008_plans.sql
+
+-- Phase 2.5 — the consume path's resolution query, and the admin matrix.
+:r $(DbRoot)\jp_mdm\04_procedures\009_entitlement_catalog.sql
 
 
 /*==============================================================================
@@ -298,6 +309,9 @@ GO
 -- Phase 3G. A team list identified only by email address is unreadable.
 :r $(DbRoot)\jp_app\01_tables\019_alter_t_app_school_users_fullname.sql
 
+-- Phase 2.5 — the append-only entitlement ledger and its three masters.
+:r $(DbRoot)\jp_app\01_tables\020_entitlement_ledger.sql
+
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
 -- shapes the schema. It is listed here so a database rebuilt from scratch ends
@@ -316,6 +330,9 @@ GO
 
 PRINT '  Functions and procedures ...';
 GO
+-- Phase 2.5. 🔴 FIRST — fn_QuotaPeriodForUtc is SCHEMABOUND to fn_IstDateToUtc.
+-- A copy of jp_sso's file; the master lives there and all three must agree.
+:r $(DbRoot)\jp_app\04_procedures\000_fn_datetime_ist.sql
 :r $(DbRoot)\jp_app\04_procedures\000_USP_LogError.sql
 :r $(DbRoot)\jp_app\04_procedures\001_provisioning.sql
 
@@ -339,6 +356,10 @@ GO
 
 -- Phase 3I. The one thing neither dashboard could read from anywhere else.
 :r $(DbRoot)\jp_app\04_procedures\012_subscription.sql
+
+-- Phase 2.5 — the entitlement engine. Reads the subscription 012 exposes, and
+-- locks the same row to make the consume atomic.
+:r $(DbRoot)\jp_app\04_procedures\013_entitlement.sql
 
 
 /*==============================================================================
