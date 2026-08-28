@@ -112,6 +112,22 @@ public static class AppConstants
         public const string VerificationSchool = "VERIFICATION.SCHOOL";
         public const string VerificationTeacher = "VERIFICATION.TEACHER";
 
+        /*
+          Job permissions — seeded in Phase 1A, and the SEED is the authority on
+          who holds them (Phase 4).
+
+          🔴 As seeded: HR has Create, Edit and View; Owner and Senior HR have
+          all five; Viewer has View only. So an HR prepares drafts and somebody
+          senior publishes them. Nothing in the code re-decides that — a
+          hard-coded role check would be a second answer to a question the
+          database already answers, and the two would drift.
+        */
+        public const string JobView = "JOB.VIEW";
+        public const string JobCreate = "JOB.CREATE";
+        public const string JobEdit = "JOB.EDIT";
+        public const string JobPublish = "JOB.PUBLISH";
+        public const string JobClose = "JOB.CLOSE";
+
         /// <summary>
         /// Seeded in Phase 1A, held by SUPER_ADMIN alone. Phase 2.5 gates the
         /// plan × feature matrix on it rather than seeding a new permission —

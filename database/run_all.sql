@@ -312,6 +312,12 @@ GO
 -- Phase 2.5 — the append-only entitlement ledger and its three masters.
 :r $(DbRoot)\jp_app\01_tables\020_entitlement_ledger.sql
 
+-- Phase 4 — jobs. The masters first: t_app_jobs has FKs to both of them.
+-- ⚠️ m_app_job_status seeds four rows and only three are ever WRITTEN; Expired
+-- is derived from LastDateToApply, never stored.
+:r $(DbRoot)\jp_app\01_tables\021_job_masters.sql
+:r $(DbRoot)\jp_app\01_tables\022_t_app_jobs.sql
+
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
 -- shapes the schema. It is listed here so a database rebuilt from scratch ends
@@ -360,6 +366,10 @@ GO
 -- Phase 2.5 — the entitlement engine. Reads the subscription 012 exposes, and
 -- locks the same row to make the consume atomic.
 :r $(DbRoot)\jp_app\04_procedures\013_entitlement.sql
+
+-- Phase 4. 🔴 AFTER 013: USP_PublishJob EXECs USP_ConsumeFeature inside its own
+-- transaction, so the engine has to exist first.
+:r $(DbRoot)\jp_app\04_procedures\014_jobs.sql
 
 
 /*==============================================================================

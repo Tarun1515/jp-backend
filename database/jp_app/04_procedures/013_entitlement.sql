@@ -175,7 +175,30 @@ GO
   (which the index forbids) or a nullable second source column (which makes
   every balance query two-sided). Recorded rather than silently assumed.
 ==============================================================================*/
-CREATE OR ALTER PROCEDURE dbo.USP_ConsumeFeature
+/*------------------------------------------------------------------------------
+  🔴 CORE + WRAPPER, AND WHY IT IS SPLIT THAT WAY (Phase 4)
+
+  The decision lives in USP_ConsumeFeatureCore, which reports through OUTPUT
+  parameters. USP_ConsumeFeature is a thin wrapper that calls it and SELECTs the
+  result set — so the contract Phase 2.5 shipped and tested is byte-for-byte
+  unchanged.
+
+  The split exists because USP_PublishJob has to CALL the consume from inside
+  its own transaction. Capturing a result set means INSERT ... EXEC, and that
+  carries two limits that only appear at runtime:
+
+    - INSERT ... EXEC cannot nest, so anything wrapping the publish would fail;
+    - a ROLLBACK inside an INSERT ... EXEC is illegal outright (Msg 3915) —
+      which is exactly what the refusal path does.
+
+  🔴 Both were found by running it, not by reading the documentation: the first
+  version of the publish used INSERT ... EXEC, and the smoke test died on Msg
+  3915 the first time a consume was attempted.
+
+  OUTPUT parameters have neither limit. Nothing about the engine's behaviour
+  changed — only how its answer is handed back.
+------------------------------------------------------------------------------*/
+CREATE OR ALTER PROCEDURE dbo.USP_ConsumeFeatureCore
     @OwnerUid         uniqueidentifier,
     @FeatureId        int,
 
@@ -213,23 +236,30 @@ CREATE OR ALTER PROCEDURE dbo.USP_ConsumeFeature
     @RefEntityTypeId  tinyint          = NULL,
     @RefEntityUid     uniqueidentifier = NULL,
     @Notes            nvarchar(400)    = NULL,
-    @ActorUserId      bigint           = NULL
+    @ActorUserId      bigint           = NULL,
+
+    -- The answer. Identical in meaning to the columns the wrapper SELECTs.
+    @Status           int              OUTPUT,
+    @Code             varchar(50)      OUTPUT,
+    @Message          nvarchar(400)    OUTPUT,
+    @EntryId          bigint           OUTPUT,
+    @Consumed         tinyint          OUTPUT,
+    @SourceId         tinyint          OUTPUT,
+    @QuotaUsed        int              OUTPUT,
+    @QuotaRemaining   int              OUTPUT,
+    @CreditBalance    int              OUTPUT,
+    @PeriodFromUtc    datetime2        OUTPUT,
+    @PeriodToUtc      datetime2        OUTPUT
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    DECLARE @Status         int              = 0,
-            @Code           varchar(50)      = NULL,
-            @Message        nvarchar(400)    = NULL,
-            @EntryId        bigint           = NULL,
-            @Consumed       tinyint          = 0,
-            @SourceId       tinyint          = NULL,
-            @QuotaUsed      int              = NULL,
-            @QuotaRemaining int              = NULL,
-            @CreditBalance  int              = NULL,
-            @PeriodFromUtc  datetime2        = NULL,
-            @PeriodToUtc    datetime2        = NULL,
-            @SubscriptionId bigint           = NULL,
+    SELECT @Status = 0, @Code = NULL, @Message = NULL, @EntryId = NULL,
+           @Consumed = 0, @SourceId = NULL, @QuotaUsed = NULL,
+           @QuotaRemaining = NULL, @CreditBalance = NULL,
+           @PeriodFromUtc = NULL, @PeriodToUtc = NULL;
+
+    DECLARE @SubscriptionId bigint           = NULL,
             @SubStatusId    int              = NULL,
             @SubIsActive    tinyint          = NULL,
             @SubEndsOn      datetime2        = NULL,
@@ -246,11 +276,8 @@ BEGIN
 
     IF @Units IS NULL OR @Units < 1
     BEGIN
-        SELECT 0 AS [Status], 'VALIDATION_FAILED' AS Code,
-               N'Units must be at least 1.' AS [Message], NULL AS Id,
-               CAST(0 AS tinyint) AS Consumed, NULL AS SourceId,
-               NULL AS QuotaUsed, NULL AS QuotaRemaining, NULL AS CreditBalance,
-               NULL AS PeriodFromUtc, NULL AS PeriodToUtc;
+        SELECT @Status = 0, @Code = 'VALIDATION_FAILED',
+               @Message = N'Units must be at least 1.';
         RETURN;
     END
 
@@ -261,16 +288,38 @@ BEGIN
     */
     IF @GatingModeId = 3 AND (@RefEntityTypeId IS NULL OR @RefEntityUid IS NULL)
     BEGIN
-        SELECT 0 AS [Status], 'VALIDATION_FAILED' AS Code,
-               N'A metered consume must carry a reference to what it is for.' AS [Message], NULL AS Id,
-               CAST(0 AS tinyint) AS Consumed, NULL AS SourceId,
-               NULL AS QuotaUsed, NULL AS QuotaRemaining, NULL AS CreditBalance,
-               NULL AS PeriodFromUtc, NULL AS PeriodToUtc;
+        SELECT @Status = 0, @Code = 'VALIDATION_FAILED',
+               @Message = N'A metered consume must carry a reference to what it is for.';
         RETURN;
     END
 
+    /*
+      🔴 NESTING DISCIPLINE — added in Phase 4, and it is load-bearing there.
+
+      USP_PublishJob calls this procedure from INSIDE its own transaction, so
+      that a publish and its consume are one atomic act: a refused consume
+      leaves the job in Draft, and a publish that fails after consuming leaves
+      no ledger row.
+
+      T-SQL has no real nested transactions — an inner COMMIT only decrements
+      @@TRANCOUNT, and an inner ROLLBACK destroys the OUTER transaction. So a
+      procedure that unconditionally BEGINs and COMMITs is safe alone and
+      quietly wrong when nested: its ROLLBACK on the 2601 path would tear down
+      the caller's transaction, and the caller would then COMMIT something that
+      no longer exists.
+
+      The rule: only the procedure that OPENED the transaction may end it.
+      Nested, this one does its work and leaves the outcome to the caller —
+      including, on an error, re-throwing so the caller's CATCH rolls back.
+
+      ⚠️ Phase 2.5's two suites are the proof this changed nothing when the
+      procedure is called on its own: @OwnsTran is 1 in every one of those
+      calls, which is exactly the old behaviour.
+    */
+    DECLARE @OwnsTran bit = CASE WHEN @@TRANCOUNT = 0 THEN 1 ELSE 0 END;
+
     BEGIN TRY
-        BEGIN TRANSACTION;
+        IF @OwnsTran = 1 BEGIN TRANSACTION;
 
         /*
           🔴 THE CRITICAL SECTION OPENS HERE.
@@ -545,14 +594,15 @@ BEGIN
                    @Message = N'That feature is configured with a gating mode this build does not understand.';
         END
 
-        COMMIT TRANSACTION;
+        IF @OwnsTran = 1 COMMIT TRANSACTION;
     END TRY
     BEGIN CATCH
         DECLARE @E int = ERROR_NUMBER(), @S int = ERROR_SEVERITY(), @T int = ERROR_STATE(),
                 @P sysname = ERROR_PROCEDURE(), @L int = ERROR_LINE(),
                 @M nvarchar(4000) = ERROR_MESSAGE();
 
-        IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;
+        -- Only the owner rolls back. Nested, the caller's CATCH does it.
+        IF @OwnsTran = 1 AND XACT_STATE() <> 0 ROLLBACK TRANSACTION;
 
         /*
           🔴 2601 ON THE REFERENCE INDEX MEANS "ALREADY DONE" — BUT ONLY AFTER
@@ -613,6 +663,68 @@ BEGIN
             THROW;
         END
     END CATCH
+
+END
+GO
+
+
+/*==============================================================================
+  USP_ConsumeFeature — the result-set face of the core.
+
+  🔴 THE CONTRACT PHASE 2.5 SHIPPED, UNCHANGED. Same name, same parameters,
+  same eleven columns in the same order. Both 2.5 suites call this and neither
+  needed a line changed when the core was extracted — which is the proof that
+  the extraction was a refactor and not a redesign.
+
+  Callers that need the answer inside their own transaction — USP_PublishJob —
+  call the CORE with OUTPUT parameters instead, avoiding INSERT ... EXEC and
+  its two runtime traps. See the core's header.
+==============================================================================*/
+CREATE OR ALTER PROCEDURE dbo.USP_ConsumeFeature
+    @OwnerUid         uniqueidentifier,
+    @FeatureId        int,
+    @GatingModeId     tinyint,
+    @HasMapping       tinyint,
+    @IsIncluded       tinyint          = 0,
+    @QuotaPerPeriod   int              = NULL,
+    @ExpectedPlanId   int              = NULL,
+    @Units            int              = 1,
+    @RefEntityTypeId  tinyint          = NULL,
+    @RefEntityUid     uniqueidentifier = NULL,
+    @Notes            nvarchar(400)    = NULL,
+    @ActorUserId      bigint           = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Status int, @Code varchar(50), @Message nvarchar(400), @EntryId bigint,
+            @Consumed tinyint, @SourceId tinyint, @QuotaUsed int, @QuotaRemaining int,
+            @CreditBalance int, @PeriodFromUtc datetime2, @PeriodToUtc datetime2;
+
+    EXEC dbo.USP_ConsumeFeatureCore
+        @OwnerUid        = @OwnerUid,
+        @FeatureId       = @FeatureId,
+        @GatingModeId    = @GatingModeId,
+        @HasMapping      = @HasMapping,
+        @IsIncluded      = @IsIncluded,
+        @QuotaPerPeriod  = @QuotaPerPeriod,
+        @ExpectedPlanId  = @ExpectedPlanId,
+        @Units           = @Units,
+        @RefEntityTypeId = @RefEntityTypeId,
+        @RefEntityUid    = @RefEntityUid,
+        @Notes           = @Notes,
+        @ActorUserId     = @ActorUserId,
+        @Status          = @Status         OUTPUT,
+        @Code            = @Code           OUTPUT,
+        @Message         = @Message        OUTPUT,
+        @EntryId         = @EntryId        OUTPUT,
+        @Consumed        = @Consumed       OUTPUT,
+        @SourceId        = @SourceId       OUTPUT,
+        @QuotaUsed       = @QuotaUsed      OUTPUT,
+        @QuotaRemaining  = @QuotaRemaining OUTPUT,
+        @CreditBalance   = @CreditBalance  OUTPUT,
+        @PeriodFromUtc   = @PeriodFromUtc  OUTPUT,
+        @PeriodToUtc     = @PeriodToUtc    OUTPUT;
 
     SELECT @Status         AS [Status],
            @Code           AS Code,

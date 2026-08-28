@@ -165,6 +165,20 @@ public static class DependencyInjection
         services.AddScoped<IEntitlementLedgerRepository, EntitlementLedgerRepository>();
         services.AddScoped<IEntitlementService, EntitlementService>();
 
+        /*
+          ---- Phase 4: jobs, the engine's first real consumer ---------------
+
+          🔴 JobService depends on IEntitlementRepository — the DIRECT jp_mdm
+          read, not IMasterService and not a cache. Publishing resolves the
+          gating fresh every time, for the same reason the engine does: a kill
+          switch with an hour of lag is not a kill switch.
+
+          The consume itself happens inside USP_PublishJob's transaction, so
+          nothing here calls the entitlement service separately.
+        */
+        services.AddScoped<IJobRepository, JobRepository>();
+        services.AddScoped<IJobService, JobService>();
+
         // Public service interfaces — the boundary the API talks to.
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserService, UserService>();
