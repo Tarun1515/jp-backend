@@ -54,6 +54,37 @@ builder.Services.AddSwaggerGen(swagger =>
                       "Backed by the jp_mdm and jp_app databases.",
     });
 
+    /*
+      🔴 SCHEMA IDS ARE NAMESPACE-QUALIFIED, AND THIS IS A BUG FIX.
+
+      Swashbuckle keys every schema on the SHORT type name by default, so two
+      DTOs with the same name anywhere in the surface collide and the whole
+      document dies with a 500:
+
+          Can't use schemaId "PlanSummaryDto" for type
+          "JP.Domain.Entitlements.PlanSummaryDto". The same schemaId is already
+          used for type "JP.Domain.Dashboards.PlanSummaryDto"
+
+      Both are legitimate and unrelated — one is the plan on a school's
+      dashboard (3I), the other a plan row in the admin matrix (2.5). Renaming
+      one would fix this collision and leave the NEXT one waiting, because
+      nothing stops two features from naming a DTO the same thing again.
+
+      Qualifying by the FULL namespace closes the class:
+      "DomainDashboardsPlanSummaryDto" and "DomainEntitlementsPlanSummaryDto".
+      They cannot collide unless two types share a namespace AND a name, which
+      the compiler already forbids.
+
+      ⚠️ Only the "JP." every type carries is dropped — a prefix on all of them
+      distinguishes none of them. Trimming further (the last segment only, say)
+      would read better and quietly restore the possibility of a collision,
+      which is the one outcome worth avoiding here. See JP.Core SchemaIds.
+
+      ⚠️ This changes schema NAMES in the document, not the JSON on the wire:
+      property names are untouched. Nothing generates a client from this today.
+    */
+    swagger.CustomSchemaIds(SchemaIds.ForType);
+
     var bearerScheme = new OpenApiSecurityScheme
     {
         Name = "Authorization",

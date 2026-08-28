@@ -59,6 +59,18 @@ builder.Services.AddSwaggerGen(swagger =>
         Description = "Authentication, users, roles and permissions. Backed by the jp_sso database.",
     });
 
+    /*
+      🔴 Namespace-qualified schema ids — the same guard as the Application API.
+
+      Applied here even though nothing has collided in this API yet. The failure
+      mode is what makes that worth doing: a duplicate short type name does not
+      break one endpoint, it makes the ENTIRE document answer 500. Waiting for
+      it to happen once per API is waiting to be surprised twice.
+
+      See JP.Core SchemaIds for the reasoning and the trade-off.
+    */
+    swagger.CustomSchemaIds(SchemaIds.ForType);
+
     var bearerScheme = new OpenApiSecurityScheme
     {
         Name = "Authorization",
