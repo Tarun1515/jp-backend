@@ -137,10 +137,37 @@ internal sealed class ApplicantService : IApplicantService
                     .MarkViewedAsync(schoolId, userUid, applicationId, caller.GetUserId(), cancellationToken)
                     .ConfigureAwait(false);
 
-                // What was returned above is what the caller asked for; the
-                // stamp has moved it on, so say so rather than leaving the
-                // screen one refresh behind its own action.
-                detail.ApplicationStatusId = ApplicationStatus.Viewed;
+                /*
+                  🔴 RE-READ, RATHER THAN PATCHING THE ID IN PLACE.
+
+                  ⚠️ This used to be `detail.ApplicationStatusId = Viewed;` and
+                  nothing else — which left FOUR fields disagreeing with each
+                  other in the one response a screen renders from:
+
+                      StatusName          still said "Applied"
+                      ViewedOn            still null, on a row just stamped
+                      History             missing the row the stamp appended
+                      AllowedTransitions  still Applied's (2 · 3 · 6), so the
+                                          screen would offer "Mark as viewed"
+                                          on an application it had just viewed
+
+                  Patching them by hand is four chances to forget the fifth the
+                  next time a field is added. The procedure already computes all
+                  of it; asking it again is one extra round trip on the FIRST
+                  open of an application and never afterwards, because the stamp
+                  is idempotent and this branch only runs at Applied.
+
+                  ⚠️ The re-read can come back null if the row went out of scope
+                  between the two calls — a branch reassignment mid-request. The
+                  original read stays in that case: the caller asked for an
+                  application they could see, and answering 404 to a successful
+                  read because of a race would be worse than a status one
+                  refresh behind.
+                */
+                detail = await _applications
+                    .GetApplicantByIdAsync(schoolId, userUid, applicationId, cancellationToken)
+                    .ConfigureAwait(false)
+                    ?? detail;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

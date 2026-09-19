@@ -156,12 +156,16 @@ internal sealed class ApplicationRepository : BaseRepository, IApplicationReposi
             var detail = await grid.ReadFirstOrDefaultAsync<ApplicantDetailDto>().ConfigureAwait(false);
 
             /*
-              ⚠️ The history set is read EVEN WHEN the detail is null, because
-              the procedure always emits both. An out-of-scope application
-              produces two empty sets rather than none — which is what keeps a
-              404 a 404 instead of a grid-shape exception.
+              ⚠️ EVERY SET IS READ EVEN WHEN THE DETAIL IS NULL, because the
+              procedure always emits all three. An out-of-scope application
+              produces three empty sets rather than none — which is what keeps
+              a 404 a 404 instead of a grid-shape exception.
+
+              ⚠️ And they are read IN ORDER, unconditionally. Returning early
+              on a null detail would leave unread grids on the reader.
             */
             var history = (await grid.ReadAsync<ApplicationHistoryDto>().ConfigureAwait(false)).AsList();
+            var transitions = (await grid.ReadAsync<AllowedTransitionDto>().ConfigureAwait(false)).AsList();
 
             if (detail is null)
             {
@@ -169,6 +173,7 @@ internal sealed class ApplicationRepository : BaseRepository, IApplicationReposi
             }
 
             detail.History = history;
+            detail.AllowedTransitions = transitions;
 
             return detail;
         }, p, cancellationToken);

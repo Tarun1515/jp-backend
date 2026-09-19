@@ -243,14 +243,15 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    DECLARE @TeacherId bigint, @Unlocked bit = 0;
+    DECLARE @TeacherId bigint, @Unlocked bit = 0, @CurrentStatusId int;
 
     /*
       Resolve through the scope FIRST. An application at a campus this user
-      does not hold leaves @TeacherId null, @Unlocked 0, and both result sets
-      empty — which the API reads as 404.
+      does not hold leaves @TeacherId null, @Unlocked 0, and all three result
+      sets empty — which the API reads as 404.
     */
-    SELECT @TeacherId = a.TeacherId
+    SELECT @TeacherId       = a.TeacherId,
+           @CurrentStatusId = a.ApplicationStatusId
     FROM dbo.t_app_applications a
         INNER JOIN dbo.fn_VisibleBranches(@SchoolId, @UserUid) v ON v.BranchId = a.BranchId
     WHERE a.ApplicationId = @ApplicationId
@@ -387,6 +388,49 @@ BEGIN
       AND a.Is_Deleted    = 0
       AND h.Is_Deleted    = 0
     ORDER BY h.ChangedOn, h.HistoryId;
+
+    /*
+      ---- 3. what this application may become next --------------------------
+
+      -----------------------------------------------------------------------
+      🔴 THE SCREEN MUST NOT OWN A SECOND COPY OF THE TRANSITION MAP
+      -----------------------------------------------------------------------
+      016's header calls fn_ApplicationTransitionAllowed "the whole status
+      machine, in one place", and the only way that stays true is if the thing
+      DRAWING THE BUTTONS asks it rather than reimplementing it. A TypeScript
+      copy of "Applied -> 2, 3, 6" would be a second source of truth for a rule
+      the database already enforces, and the two would drift the first time
+      anybody edited one — silently, because the server would simply refuse an
+      action the screen had offered.
+
+      This CROSS APPLY runs the real function against every reachable status,
+      so the answer is the function's by construction rather than by agreement.
+
+      ⚠️ AN EMPTY SET IS A REAL ANSWER, NOT A MISSING ONE. A Rejected
+      application is terminal, so nothing comes back and the screen draws no
+      actions at all — which is the 3F/3G rule (a move that will never be
+      allowed is ABSENT, not disabled). Do not let a caller read empty as
+      "unknown, show everything".
+
+      ⚠️ The offer chain cannot appear here whatever the master says: the
+      function refuses 7..10 outright until Phase 6 (016).
+
+      🔴 st.Name, never st.TeacherFacingName — these are the SCHOOL's buttons.
+    */
+    SELECT
+        st.ApplicationStatusId,
+        st.Code,
+        st.Name,
+        st.DisplayOrder
+    FROM dbo.m_app_application_status st
+        CROSS APPLY (SELECT dbo.fn_ApplicationTransitionAllowed(
+                                @CurrentStatusId, st.ApplicationStatusId) AS Allowed) t
+    WHERE st.Is_Deleted  = 0
+      AND st.Is_Active   = 1
+      AND st.IsReachable = 1
+      AND t.Allowed      = 1
+      AND @CurrentStatusId IS NOT NULL      -- out of scope: no rows, like the two above
+    ORDER BY st.DisplayOrder;
 END
 GO
 

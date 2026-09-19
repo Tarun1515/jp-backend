@@ -213,6 +213,45 @@ public sealed class ApplicantDetailDto
     public bool HasResume { get; set; }
 
     public IReadOnlyList<ApplicationHistoryDto> History { get; set; } = [];
+
+    /// <summary>
+    /// 🔴 THE STATUSES THIS APPLICATION MAY LEGALLY MOVE TO, FROM THE SERVER.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Computed by <c>fn_ApplicationTransitionAllowed</c> itself — the same
+    /// function that refuses an illegal move — so the buttons a screen draws
+    /// and the moves the database permits cannot disagree. A TypeScript copy
+    /// of the map would be a second source of truth for a rule that is already
+    /// enforced, and it would drift silently: the screen would offer an action
+    /// the server then refused.
+    /// </para>
+    /// <para>
+    /// ⚠️ EMPTY IS AN ANSWER. A Rejected application is terminal, so this comes
+    /// back empty and the screen draws no status actions at all — a move that
+    /// will never be allowed is ABSENT, not disabled (the 3F/3G rule). A client
+    /// must never read empty as "unknown, offer everything".
+    /// </para>
+    /// <para>
+    /// ⚠️ Presentation input only, exactly like <c>StructuralFieldsLocked</c>
+    /// on a job. The server refuses an illegal transition with
+    /// INVALID_TRANSITION whether or not a button was drawn.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<AllowedTransitionDto> AllowedTransitions { get; set; } = [];
+}
+
+/// <summary>A status this application may be moved to next.</summary>
+/// <remarks>
+/// <c>Code</c> is the stable contract a client branches on (2.47 / 2.21);
+/// <c>Name</c> is the school's wording and the client may not assume it.
+/// </remarks>
+public sealed class AllowedTransitionDto
+{
+    public int ApplicationStatusId { get; set; }
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public int DisplayOrder { get; set; }
 }
 
 /// <summary>One step of an application's journey, as the school sees it.</summary>

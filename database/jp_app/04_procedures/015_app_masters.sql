@@ -9,15 +9,16 @@
   ---------------------------------------------------------------------------
   🔴 WHY THERE IS A SECOND ONE OF THESE AT ALL (G26)
   ---------------------------------------------------------------------------
-  `USP_GetMaster` lives in jp_mdm and reads jp_mdm tables. Five masters do not
+  `USP_GetMaster` lives in jp_mdm and reads jp_mdm tables. Six masters do not
   live there:
 
-      m_app_employment_types   m_app_job_status
+      m_app_employment_types   m_app_job_status    m_app_application_status
       m_app_ledger_entry_types m_app_ledger_sources m_app_ref_entity_types
 
-  They are in jp_app because `t_app_jobs` and `t_app_feature_ledger` carry
-  PHYSICAL foreign keys to them, and decision 2.2 forbids a physical FK across
-  databases. So the master had to follow the table that points at it.
+  They are in jp_app because `t_app_jobs`, `t_app_applications` and
+  `t_app_feature_ledger` carry PHYSICAL foreign keys to them, and decision 2.2
+  forbids a physical FK across databases. So the master had to follow the table
+  that points at it.
 
   ⚠️ The alternatives were considered and rejected:
 
@@ -127,6 +128,34 @@ BEGIN
         SELECT JobStatusId AS Id, Code, Name, DisplayOrder
         FROM dbo.m_app_job_status
         WHERE Is_Deleted = 0 AND Is_Active = 1 ORDER BY DisplayOrder, Name;
+
+    /*
+      🔴 REACHABLE ROWS ONLY — IsReachable = 1 (Phase 5).
+
+      The master holds ten statuses and the transition map can produce six.
+      Seven to ten are the offer chain: they are seeded so their ids never move
+      (2.47), `fn_ApplicationTransitionAllowed` refuses all four, and Phase 6
+      is what makes them reachable.
+
+      ⚠️ A filter dropdown offering "Offer sent" today would be a filter that
+      can only ever return nothing — the person picks it, sees an empty list,
+      and has no way to tell a working filter from a broken screen. That is the
+      opposite of the JOB_STATUS branch above, which deliberately DOES offer
+      Expired: jobs genuinely are expired, the status is merely computed rather
+      than stored. Reachable-but-derived and unreachable-until-Phase-6 are
+      different things and the dropdown has to tell them apart.
+
+      🔴 st.Name, NEVER st.TeacherFacingName. This key feeds the SCHOOL's
+      filter. The two vocabularies differ where it matters most — the school
+      says "Rejected", the teacher is shown "Not selected" — and the teacher
+      screens never need this list: every teacher-facing row already carries
+      its own TeacherFacingName from the read procedures (017).
+    */
+    ELSE IF @MasterCode = 'APPLICATION_STATUS'
+        SELECT ApplicationStatusId AS Id, Code, Name, DisplayOrder
+        FROM dbo.m_app_application_status
+        WHERE Is_Deleted = 0 AND Is_Active = 1 AND IsReachable = 1
+        ORDER BY DisplayOrder, Name;
 
     ELSE IF @MasterCode = 'LEDGER_ENTRY_TYPE'
         SELECT EntryTypeId AS Id, Code, Name, DisplayOrder

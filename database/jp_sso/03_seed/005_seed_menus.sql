@@ -148,18 +148,25 @@ VALUES
 -- saved link for a label change (3F).
 ('SCHOOL_BRANCHES',         NULL, N'Campuses',              2, N'/branches',             'map-pin',          'BRANCH.MANAGE',       30, 1, 1),
 ('SCHOOL_JOBS',             NULL, N'Jobs',                  2, N'/jobs',                 'briefcase',        'JOB.VIEW',            40, 1, 1),
--- 🔴 HIDDEN UNTIL PHASE 5 (3I). IsMenuVisible = 0.
+-- 🔴 VISIBLE AGAIN — PHASE 5B. IsMenuVisible 0 -> 1.
 --
--- /applicants was a STATIC MOCKUP — fifty rows out of a fixture file with no
--- HTTP call, and one of the two screens that looked the most finished (G6). 3I
--- removed its route; the component survives under _design-reference/ as the
--- design for Phase 5.
+-- It was hidden in 3I because /applicants was a STATIC MOCKUP: fifty rows out
+-- of a fixture file with no HTTP call, and one of the two screens that looked
+-- the most finished (G6). 3I removed the route, and the menu row is data
+-- (2.37) — leaving it visible would have put a sidebar entry in front of every
+-- school that leads to a 404.
 --
--- ⚠️ The menu row is data (2.37), so leaving it visible would put a sidebar
--- entry in front of every school that leads to a 404. It comes back the day
--- applications exist — which is why the row stays here rather than being
--- deleted: its permission, order and icon are already settled.
-('SCHOOL_APPLICANTS',       NULL, N'Applicants',            2, N'/applicants',           'user-check',       'APPLICANT.VIEW',      50, 0, 1),
+-- The row was kept rather than deleted precisely so this day would be a
+-- one-character change: its permission, order and icon were already settled in
+-- 1D and none of them needed revisiting. t_app_applications exists now, the
+-- route is real, and the screen reads the database.
+--
+-- ⚠️ THE PERMISSION IS UNCHANGED. APPLICANT.VIEW has gated this row since 1D;
+-- a school Viewer holds it and therefore sees the entry, which is correct — a
+-- Viewer may read applicants and change nothing, and the screen renders
+-- read-only for them (the 3F/3G rule: actions they cannot take are ABSENT,
+-- not disabled).
+('SCHOOL_APPLICANTS',       NULL, N'Applicants',            2, N'/applicants',           'user-check',       'APPLICANT.VIEW',      50, 1, 1),
 ('SCHOOL_TEACHER_SEARCH',   NULL, N'Find teachers',         2, N'/teacher-search',       'search',           'TEACHER_SEARCH.VIEW', 60, 1, 1),
 ('SCHOOL_OFFERS',           NULL, N'Offers',                2, N'/offers',               'file-signature',   'OFFER.CREATE',        70, 1, 1),
 ('SCHOOL_USERS',            NULL, N'Team',                  2, N'/users',                'users',            'USER.MANAGE',         80, 1, 1),
