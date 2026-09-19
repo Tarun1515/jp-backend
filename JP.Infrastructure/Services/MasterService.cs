@@ -15,6 +15,7 @@ public interface IMasterService
 /// Reads master data.
 /// </summary>
 /// <remarks>
+/// <para>
 /// 🔴 There is NO whitelist in this class, on purpose.
 ///
 /// <c>USP_GetMaster</c> already selects a branch of a CASE it wrote itself, and
@@ -24,15 +25,52 @@ public interface IMasterService
 /// reachable that the procedure never intended to expose.
 ///
 /// One gate, in the procedure.
+/// </para>
+/// <para>
+/// 🔴 TWO PROCEDURES NOW, AND STILL NO LIST HERE (PRE-5, G26).
+///
+/// Five masters live in jp_app — employment types, job status and the three
+/// ledger vocabularies — because the tables that point at them carry physical
+/// foreign keys, and a physical FK may not cross a database (2.2). They are
+/// served by <c>USP_GetAppMaster</c>, which has the same whitelist shape and
+/// the same result-set shape.
+///
+/// ⚠️ The obvious implementation — a <c>HashSet</c> here naming the five
+/// jp_app keys — is exactly the second list the paragraph above forbids, just
+/// wearing a routing hat. So there is none: jp_mdm is asked first, and its
+/// <c>@Recognised = 0</c> is what sends the key on to jp_app. Each procedure
+/// stays its own gate, and adding a master anywhere is still a one-file edit.
+/// </para>
+/// <para>
+/// ⚠️ ORDER IS NOT ARBITRARY: jp_mdm carries twenty-three of the twenty-eight
+/// keys, so asking it first means the common case is one round trip and only
+/// the five jp_app keys (and genuinely unknown ones) pay for a second. A key
+/// claimed by BOTH procedures would be answered by jp_mdm and the jp_app
+/// branch would never run — silently. The key sets are disjoint, and
+/// <c>jobs-screens.mjs</c> asserts that by reading both procedure bodies.
+/// </para>
+/// <para>
+/// 🔴 NOTHING GATING COMES THROUGH HERE. <c>m_mdm_features</c> and
+/// <c>m_mdm_plan_features</c> are read by <see cref="IEntitlementRepository"/>,
+/// directly and uncached, and the responses this service feeds carry an hour of
+/// <c>Cache-Control</c>. Employment types are ordinary reference data and that
+/// hour is fine for them; a gating mode with an hour of lag is an unsellable
+/// kill switch. Do not route one through the other in either direction.
+/// </para>
 /// </remarks>
 internal sealed class MasterService : IMasterService
 {
     private readonly IMasterRepository _repository;
+    private readonly IAppMasterRepository _appRepository;
     private readonly ILogger<MasterService> _logger;
 
-    public MasterService(IMasterRepository repository, ILogger<MasterService> logger)
+    public MasterService(
+        IMasterRepository repository,
+        IAppMasterRepository appRepository,
+        ILogger<MasterService> logger)
     {
         _repository = repository;
+        _appRepository = appRepository;
         _logger = logger;
     }
 
@@ -41,9 +79,36 @@ internal sealed class MasterService : IMasterService
         int? parentId,
         CancellationToken cancellationToken)
     {
+        var key = masterKey ?? string.Empty;
+
         var (rows, recognised) = await _repository
-            .GetAsync(masterKey ?? string.Empty, parentId, cancellationToken)
+            .GetAsync(key, parentId, cancellationToken)
             .ConfigureAwait(false);
+
+        /*
+          🔴 THE FALL-THROUGH, AND WHY IT IS A FALL-THROUGH AND NOT A LOOKUP.
+
+          jp_mdm did not recognise the key. That is either a jp_app master or a
+          key nobody has. Asking jp_app is how we find out, and it costs a
+          round trip only on the paths that need one.
+
+          ⚠️ It is guarded on `!recognised`, NOT on `rows.Count == 0`. A
+          recognised-but-empty master is a real and expected answer — districts
+          and cities return nothing at all until the dataset lands (2.47) — and
+          falling through on emptiness would send those two keys to jp_app on
+          every single request, for ever, to be told nothing a second time.
+        */
+        if (!recognised)
+        {
+            var (appRows, appRecognised) = await _appRepository
+                .GetAsync(key, parentId, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (appRecognised)
+            {
+                return appRows.Select(ToDto).ToList();
+            }
+        }
 
         /*
           🔴 THE CALLER LEARNS NOTHING. WE LEARN IMMEDIATELY.
@@ -63,8 +128,9 @@ internal sealed class MasterService : IMasterService
         if (!recognised)
         {
             _logger.LogWarning(
-                "Master key {MasterKey} is not in USP_GetMaster's whitelist. The caller got an empty list. " +
-                "If this came from our own client, it is a typo or a key the procedure never learned.",
+                "Master key {MasterKey} is in NEITHER whitelist — not USP_GetMaster (jp_mdm) and not " +
+                "USP_GetAppMaster (jp_app). The caller got an empty list. If this came from our own " +
+                "client, it is a typo or a key neither procedure ever learned.",
                 masterKey);
         }
 
@@ -84,6 +150,14 @@ internal sealed class MasterService : IMasterService
     /// Sequential rather than parallel: each call takes a connection from the
     /// pool, and firing seventeen at once to save a few milliseconds on a
     /// response that is cached for hours is a bad trade.
+    ///
+    /// ⚠️ THE jp_app MASTERS ARE NOT IN THE BUNDLE EITHER, and that is also a
+    /// decision. This bundle is jp_mdm's load-time set and runs on one
+    /// connection; adding employment types would open a SECOND database on
+    /// every cold start of every app, for one dropdown on one screen in one of
+    /// them. The per-key endpoint serves it, carries the same hour of
+    /// <c>Cache-Control</c>, and is fetched once by the form that needs it.
+    /// Revisit only when a jp_app master is wanted on most screens.
     /// </remarks>
     public async Task<MasterBundleDto> GetBundleAsync(CancellationToken cancellationToken)
     {

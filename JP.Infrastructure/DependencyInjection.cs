@@ -115,6 +115,23 @@ public static class DependencyInjection
         // target separate databases: two connections, two commits, which is the
         // shape decision 2.2 requires.
         services.AddScoped<IMasterRepository, MasterRepository>();
+
+        /*
+          PRE-5 (G26). The five masters that live in jp_app rather than jp_mdm,
+          because t_app_jobs and t_app_feature_ledger carry PHYSICAL foreign
+          keys to them and a physical FK may not cross a database (2.2).
+
+          🔴 A separate repository because Database is one value per class —
+          that is what keeps "one call, one database" a compiler fact rather
+          than a convention. MasterService asks jp_mdm first and falls through
+          to this only when jp_mdm says it did not recognise the key, so there
+          is still no list in C# saying which master lives where.
+
+          ⚠️ Ordinary reference data. The no-cache rule below applies to
+          m_mdm_features / m_mdm_plan_features, not to employment types.
+        */
+        services.AddScoped<IAppMasterRepository, AppMasterRepository>();
+
         services.AddScoped<IApprovalRepository, ApprovalRepository>();
         services.AddScoped<IProvisioningRepository, ProvisioningRepository>();
         services.AddScoped<IPlanRepository, PlanRepository>();

@@ -371,6 +371,12 @@ GO
 -- transaction, so the engine has to exist first.
 :r $(DbRoot)\jp_app\04_procedures\014_jobs.sql
 
+-- PRE-5 (G26). The five masters that live in jp_app rather than jp_mdm, served
+-- through the same whitelist-driven shape as jp_mdm's USP_GetMaster. Without
+-- this there is no data source for the employment-type dropdown and no school
+-- can post anything but a Full-time vacancy.
+:r $(DbRoot)\jp_app\04_procedures\015_app_masters.sql
+
 
 /*==============================================================================
   DONE
