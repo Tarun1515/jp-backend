@@ -318,6 +318,11 @@ GO
 :r $(DbRoot)\jp_app\01_tables\021_job_masters.sql
 :r $(DbRoot)\jp_app\01_tables\022_t_app_jobs.sql
 
+-- Phase 5 — applications. Masters first: t_app_applications FKs to the status
+-- master, and to t_app_jobs above.
+:r $(DbRoot)\jp_app\01_tables\023_application_masters.sql
+:r $(DbRoot)\jp_app\01_tables\024_t_app_applications.sql
+
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
 -- shapes the schema. It is listed here so a database rebuilt from scratch ends
@@ -370,6 +375,22 @@ GO
 -- Phase 4. 🔴 AFTER 013: USP_PublishJob EXECs USP_ConsumeFeature inside its own
 -- transaction, so the engine has to exist first.
 :r $(DbRoot)\jp_app\04_procedures\014_jobs.sql
+
+-- Phase 5. 🔴 AFTER 014: USP_ApplyToJob calls fn_EffectiveJobStatusId, so an
+-- expired job refuses by the same single definition the school's list uses.
+--
+-- ⚠️ 010 (teacher public profile) still runs BEFORE this and now carries the
+-- real fn_TeacherContactUnlocked — it reads t_app_applications, which the
+-- tables section above has already created. Consent path 1 is live.
+:r $(DbRoot)\jp_app\04_procedures\016_applications.sql
+
+-- Phase 5, the reading half. 🔴 AFTER 010 AND 014: every school-side read
+-- routes contact through fn_TeacherContactUnlocked (010) and every teacher-side
+-- job read through fn_EffectiveJobStatusId (014). Split from 016 because what a
+-- SCHOOL may see of an application and what a TEACHER may see of the same row
+-- are two different shapes, and one procedure with an audience flag eventually
+-- shows the wrong one to the wrong person.
+:r $(DbRoot)\jp_app\04_procedures\017_application_reads.sql
 
 -- PRE-5 (G26). The five masters that live in jp_app rather than jp_mdm, served
 -- through the same whitelist-driven shape as jp_mdm's USP_GetMaster. Without

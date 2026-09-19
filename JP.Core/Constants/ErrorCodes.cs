@@ -135,6 +135,73 @@ public static class ErrorCodes
     /// </remarks>
     public const string PlanChanged = "PLAN_CHANGED";
 
+    // ---- applications (Phase 5) --------------------------------------------
+
+    /*
+      🔴 DISTINCT ON PURPOSE, AND THE SCREEN TREATS THEM VERY DIFFERENTLY
+      (2.12 / 2.21). A client branches on the code, never on the message text,
+      and collapsing any two of these would make one of these screens lie:
+
+        ALREADY_APPLIED          a SUCCESS. "You applied on the 3rd."
+        RESUME_REQUIRED          a link straight to the resume upload
+        JOB_EXPIRED              "applications closed" — different from a job
+                                 that does not exist, which is NOT_FOUND
+        INVALID_TRANSITION       about this application's own history
+        OFFER_STAGE_UNAVAILABLE  about the product's calendar, not the user
+        APPLY_CONFLICT           retryable; nothing about the user at all
+
+      ⚠️ NOTHING HERE IS AN ENTITLEMENT CODE, and none may ever be added.
+      Applying is FREE — the consuming action is the school's PUBLISH (2.64).
+      A QUOTA_EXHAUSTED reaching an apply would mean a teacher had been charged
+      for looking for work.
+    */
+
+    /// <summary>
+    /// 🔴 A SUCCESS code. The teacher wanted to have applied, and they have —
+    /// this is a double-tap resolving to the application that already exists.
+    /// </summary>
+    /// <remarks>
+    /// Returned with Status = 1. Treating it as a failure would send somebody
+    /// to support over a working application. It is also what the loser of a
+    /// genuinely parallel double-apply receives.
+    /// </remarks>
+    public const string AlreadyApplied = "ALREADY_APPLIED";
+
+    /// <summary>The teacher has no resume, and a school reads one first.</summary>
+    public const string ResumeRequired = "RESUME_REQUIRED";
+
+    /// <summary>
+    /// The closing date has passed. Derived from the date (IST), never from a
+    /// stored status — see <c>fn_EffectiveJobStatusId</c>.
+    /// </summary>
+    public const string JobExpired = "JOB_EXPIRED";
+
+    /// <summary>The status machine refuses this move from where the application is.</summary>
+    public const string InvalidTransition = "INVALID_TRANSITION";
+
+    /// <summary>
+    /// Statuses 7–10 — the offer chain. Seeded so the ids never move, refused
+    /// until Phase 6 builds <c>t_app_offers</c>.
+    /// </summary>
+    /// <remarks>
+    /// Its own code because it is a not-yet (2.62) rather than a mistake the
+    /// person made, and the two deserve different words on the screen.
+    /// </remarks>
+    public const string OfferStageUnavailable = "OFFER_STAGE_UNAVAILABLE";
+
+    /// <summary>
+    /// The unique index refused the insert and the row it collided with was
+    /// gone by the time it was re-read. Retryable, and deliberately not
+    /// retried inside the procedure.
+    /// </summary>
+    public const string ApplyConflict = "APPLY_CONFLICT";
+
+    /// <summary>
+    /// 🔴 A SUCCESS code. The application is already in the requested state, so
+    /// nothing moved and nothing was written to the history (2.48).
+    /// </summary>
+    public const string NoChange = "NO_CHANGE";
+
     // ---- generic -----------------------------------------------------------
 
     public const string ValidationFailed = "VALIDATION_FAILED";

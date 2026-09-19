@@ -746,7 +746,22 @@ BEGIN
         j.PublishedOn,
         j.ClosedOn,
         j.ViewCount,
-        j.ApplicationCount,
+        /*
+          🔴 DERIVED FROM PHASE 5, NOT READ FROM THE COLUMN.
+
+          t_app_jobs.ApplicationCount is deliberately never written — 024's
+          header has the whole argument, and it is 2.5's argument for balances
+          and 4's for expiry: a maintained counter is a second source of truth
+          that drifts, and the drift is SILENT. The number on the screen stops
+          matching the list underneath it and nothing errors.
+
+          ⚠️ Until Phase 5 this projection read the column, which was correct
+          while the answer was always zero and became wrong the moment
+          t_app_applications took its first row. Changed here rather than in a
+          later "why does the list say 0" bug.
+        */
+        (SELECT COUNT(*) FROM dbo.t_app_applications ac
+         WHERE ac.JobId = j.JobId AND ac.Is_Deleted = 0)                     AS ApplicationCount,
         j.RowVersion,
 
         -- 🔴 What is STORED …
@@ -796,7 +811,12 @@ BEGIN
         j.SalaryMin, j.SalaryMax, j.IsSalaryNegotiable,
         j.CityId, j.StateId, j.WorkingDays, j.TimingFrom, j.TimingTo,
         j.LastDateToApply, j.ExpectedJoiningDate, j.JobDescription,
-        j.PublishedOn, j.ClosedOn, j.ViewCount, j.ApplicationCount, j.RowVersion,
+        j.PublishedOn, j.ClosedOn, j.ViewCount,
+
+        -- 🔴 DERIVED, like the list above. The column stays at zero (024).
+        (SELECT COUNT(*) FROM dbo.t_app_applications ac
+         WHERE ac.JobId = j.JobId AND ac.Is_Deleted = 0)        AS ApplicationCount,
+        j.RowVersion,
 
         j.JobStatusId                                                 AS StoredStatusId,
         dbo.fn_EffectiveJobStatusId(j.JobStatusId, j.LastDateToApply)  AS JobStatusId,

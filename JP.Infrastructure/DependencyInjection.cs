@@ -196,6 +196,25 @@ public static class DependencyInjection
         services.AddScoped<IJobRepository, JobRepository>();
         services.AddScoped<IJobService, JobService>();
 
+        /*
+          ---- Phase 5: applications ----------------------------------------
+
+          🔴 NEITHER SERVICE DEPENDS ON THE ENTITLEMENT ENGINE, AND NEITHER MAY.
+          Applying is FREE; the consuming action is the school's publish (2.64).
+          If IEntitlementRepository or IEntitlementService ever appears in
+          either constructor, a teacher is being charged to look for work.
+
+          Two services over ONE repository, because the two audiences read the
+          same tables and must never share a shape: ApplicantService serves the
+          school (contact, the snapshot resume, the school's own remarks) and
+          TeacherApplicationService serves the teacher (TeacherFacingName, and
+          no rejection reason anywhere). The procedures are already split the
+          same way (016 writes, 017 reads, each audience its own).
+        */
+        services.AddScoped<IApplicationRepository, ApplicationRepository>();
+        services.AddScoped<IApplicantService, ApplicantService>();
+        services.AddScoped<ITeacherApplicationService, TeacherApplicationService>();
+
         // Public service interfaces — the boundary the API talks to.
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserService, UserService>();

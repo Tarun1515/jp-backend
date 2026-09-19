@@ -128,6 +128,36 @@ public static class AppConstants
         public const string JobPublish = "JOB.PUBLISH";
         public const string JobClose = "JOB.CLOSE";
 
+        /*
+          Applicant permissions — seeded in Phase 1A, wired in Phase 5. The SEED
+          is the authority on who holds them, and it is worth reading before
+          assuming, because two of these are NOT what a role name suggests:
+
+          🔴 HR MAY SHORTLIST BUT MAY NOT REJECT. The seed grants HR
+          APPLICANT.VIEW, APPLICANT.SHORTLIST and RESUME.DOWNLOAD, and withholds
+          APPLICANT.REJECT. Turning somebody down is the decision that ends a
+          conversation with a person, and the seed reserves it for Owner and
+          Senior HR.
+
+          🔴 A VIEWER MAY NOT DOWNLOAD A RESUME. SCHOOL_VIEWER holds
+          APPLICANT.VIEW alone — not RESUME.DOWNLOAD — so a read-only account
+          sees that a resume exists and cannot open a document carrying a
+          teacher's phone number and address.
+
+          Nothing in the code re-decides either of those.
+        */
+        public const string ApplicantView = "APPLICANT.VIEW";
+        public const string ApplicantShortlist = "APPLICANT.SHORTLIST";
+        public const string ApplicantReject = "APPLICANT.REJECT";
+
+        /// <summary>
+        /// 🔴 A resume IS a contact detail — it carries a phone number and an
+        /// email in its first three lines (2.56's "the resume is a contact
+        /// detail"). This permission gates the FILE; the teacher's consent
+        /// gates whether there is anything to gate at all.
+        /// </summary>
+        public const string ResumeDownload = "RESUME.DOWNLOAD";
+
         /// <summary>
         /// Seeded in Phase 1A, held by SUPER_ADMIN alone. Phase 2.5 gates the
         /// plan × feature matrix on it rather than seeding a new permission —

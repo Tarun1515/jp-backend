@@ -163,8 +163,46 @@ CREATE OR ALTER FUNCTION dbo.fn_TeacherContactUnlocked
 RETURNS bit
 AS
 BEGIN
-    -- Phase 5 replaces this. See the note above.
-    RETURN 0;
+    /*
+      🔴 PHASE 5 MADE PATH 1 REAL. THIS USED TO BE A HARD `RETURN 0`.
+
+      Until t_app_applications existed there was no consent a teacher could
+      give, so the honest answer to "may this school see the contact details"
+      was always no. It is now exactly one question:
+
+          has this teacher applied to this school?
+
+      ⚠️ ONE EXISTS, AND NOTHING ELSE. No join to jobs, no join to
+      subscriptions, no plan check, no invite check. Every extra clause here is
+      a new way for contact to leak, and this function is the only place in the
+      product that decides it.
+
+      ⚠️ SchoolId comes from t_app_applications' OWN denormalised column, not
+      through the job. The row is the consent; it must keep answering correctly
+      after the job is closed, after the campus is soft-deleted, and whatever a
+      later phase does to jobs.
+
+      ⚠️ Is_Deleted = 0 only. Is_Active is deliberately NOT tested: an
+      application is a historical fact, and deactivating one must not silently
+      re-lock details a school has already legitimately seen. Only a soft
+      DELETE — which nothing in Phase 5 performs (G28) — takes the consent
+      back.
+
+      🔴 SAVED JOBS DO NOT COUNT. t_app_saved_jobs is private to the teacher,
+      tells the school nothing, and must never appear in this function. Saving
+      is interest; applying is consent.
+
+      Path 2 — the teacher ACCEPTED an invitation — is Phase 6, and the note
+      above this function explains why it cannot be bolted onto the existing
+      invite statuses without collapsing into path 1.
+    */
+    RETURN CASE WHEN EXISTS (
+        SELECT 1
+        FROM dbo.t_app_applications a
+        WHERE a.TeacherId  = @TeacherId
+          AND a.SchoolId   = @ViewerSchoolId
+          AND a.Is_Deleted = 0
+    ) THEN 1 ELSE 0 END;
 END
 GO
 
