@@ -83,6 +83,47 @@ BEGIN
     WHERE RequestId = @RequestId AND Is_Deleted = 0;
 
     /*--------------------------------------------------------------------------
+      🔴 THE EFFECTIVE LEVEL ROW, RESOLVED ONCE — 6A-0.
+    --------------------------------------------------------------------------
+      024's header states the contract in one line: "A row WITH an
+      OrganizationUid overrides it for that one organisation."
+
+      ⚠️ THIS PROCEDURE USED TO READ THAT TABLE TWICE, AND THE TWO READS
+      DISAGREED ABOUT WHAT "OVERRIDE" MEANT.
+
+        · the IsFinal read picked TOP (1) with the organisation row ORDERED
+          FIRST — an override, correctly;
+        · the permission check ran NOT EXISTS over BOTH rows at once, so the
+          platform default's role still matched. An organisation that
+          configured "only Senior HR may approve here" got "Senior HR OR
+          whoever the platform default names" — the override ADDED a permitted
+          role instead of replacing one.
+
+      An organisation narrowing its own approvals is exactly the case this
+      column exists for, and it was the one case that silently did not work.
+      It was invisible because every seeded row is a platform default: with no
+      override anywhere, both readings give the same answer. G14 was recorded
+      for this class of thing — one path, walked a hundred times.
+
+      🔴 So the row is resolved ONCE, here, and both decisions read the result.
+      Two reads of one configuration is how they drift; there is now one.
+
+      ⚠️ ORDER BY puts the organisation row first and breaks ties on LevelId, so
+      the answer is deterministic rather than whatever the plan happens to
+      return.
+    --------------------------------------------------------------------------*/
+    DECLARE @LevelRoleId int = NULL, @LevelIsFinal tinyint = NULL;
+
+    SELECT TOP (1) @LevelRoleId = l.RoleId, @LevelIsFinal = l.IsFinalLevel
+    FROM dbo.t_mdm_request_levels l
+    WHERE l.RequestTypeId = @RequestTypeId
+      AND l.LevelNumber   = @CurrentLevel
+      AND l.Is_Deleted    = 0
+      AND l.Is_Active     = 1
+      AND (l.OrganizationUid = @OrganizationUid OR l.OrganizationUid IS NULL)
+    ORDER BY CASE WHEN l.OrganizationUid IS NULL THEN 1 ELSE 0 END, l.LevelId;
+
+    /*--------------------------------------------------------------------------
       1. VALIDATE.
     --------------------------------------------------------------------------*/
     IF @CurrentStatus IS NULL
@@ -118,21 +159,18 @@ BEGIN
                @Message = N'Someone else has already actioned this request. Reload to see the current state.';
 
     /*
-      The actor must hold the role configured for THIS level. Checked against
-      the organisation-specific row if one exists, otherwise the platform
-      default (OrganizationUid IS NULL).
+      The actor must hold the role configured for THIS level — the EFFECTIVE
+      row resolved above, which is the organisation's override when it has one
+      and the platform default when it does not.
+
+      ⚠️ @LevelRoleId NULL means no level is configured for this request type at
+      this level at all. NOT EXISTS over that is TRUE, so the action is refused
+      rather than waved through — an unconfigured approval step is not an open
+      one.
     */
     ELSE IF @ActorRoleIds IS NOT NULL
-        AND NOT EXISTS (
-            SELECT 1
-            FROM dbo.t_mdm_request_levels l
-            WHERE l.RequestTypeId = @RequestTypeId
-              AND l.LevelNumber   = @CurrentLevel
-              AND l.Is_Deleted    = 0
-              AND l.Is_Active     = 1
-              AND (l.OrganizationUid = @OrganizationUid OR l.OrganizationUid IS NULL)
-              AND EXISTS (SELECT 1 FROM STRING_SPLIT(@ActorRoleIds, ',') r
-                          WHERE TRY_CAST(LTRIM(RTRIM(r.value)) AS int) = l.RoleId))
+        AND NOT EXISTS (SELECT 1 FROM STRING_SPLIT(@ActorRoleIds, ',') r
+                        WHERE TRY_CAST(LTRIM(RTRIM(r.value)) AS int) = @LevelRoleId)
         SELECT @Code = 'FORBIDDEN',
                @Message = N'You do not have permission to action this request at this level.';
 
@@ -162,20 +200,21 @@ BEGIN
                   assumed. MVP seeds one level per type, so level 1 is usually
                   final — but the engine must not encode that, or Phase 6's
                   two-level offer approval becomes a rewrite instead of a row.
+
+                  🔴 FROM THE ROW RESOLVED AT THE TOP, not a second read of the
+                  same table. The second read is what let this decision and the
+                  permission check disagree about an organisation override
+                  (6A-0 — see the resolution block above).
                 */
-                DECLARE @IsFinal tinyint = NULL;
+                DECLARE @IsFinal tinyint = @LevelIsFinal;
 
-                SELECT TOP (1) @IsFinal = l.IsFinalLevel
-                FROM dbo.t_mdm_request_levels l
-                WHERE l.RequestTypeId = @RequestTypeId
-                  AND l.LevelNumber   = @CurrentLevel
-                  AND l.Is_Deleted    = 0
-                  AND l.Is_Active     = 1
-                  AND (l.OrganizationUid = @OrganizationUid OR l.OrganizationUid IS NULL)
-                ORDER BY CASE WHEN l.OrganizationUid IS NULL THEN 1 ELSE 0 END;  -- org override wins
-
-                -- No configured level at all: treat this one as final rather
-                -- than advancing into a level nobody can approve.
+                /*
+                  ⚠️ No configuration at all means FINAL, so an unconfigured
+                  request completes rather than climbing forever. Note the
+                  asymmetry with the permission check, which refuses in the
+                  same situation: it is deliberate. A missing config must not
+                  strand a request, and must not silently authorise anybody.
+                */
                 IF @IsFinal IS NULL SET @IsFinal = 1;
 
                 IF @IsFinal = 1
