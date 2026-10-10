@@ -9,11 +9,12 @@
   ---------------------------------------------------------------------------
   🔴 WHY THERE IS A SECOND ONE OF THESE AT ALL (G26)
   ---------------------------------------------------------------------------
-  `USP_GetMaster` lives in jp_mdm and reads jp_mdm tables. Six masters do not
+  `USP_GetMaster` lives in jp_mdm and reads jp_mdm tables. Seven masters do not
   live there:
 
-      m_app_employment_types   m_app_job_status    m_app_application_status
-      m_app_ledger_entry_types m_app_ledger_sources m_app_ref_entity_types
+      m_app_employment_types   m_app_job_status     m_app_application_status
+      m_app_offer_status       m_app_ledger_sources m_app_ref_entity_types
+      m_app_ledger_entry_types
 
   They are in jp_app because `t_app_jobs`, `t_app_applications` and
   `t_app_feature_ledger` carry PHYSICAL foreign keys to them, and decision 2.2
@@ -156,6 +157,27 @@ BEGIN
         FROM dbo.m_app_application_status
         WHERE Is_Deleted = 0 AND Is_Active = 1 AND IsReachable = 1
         ORDER BY DisplayOrder, Name;
+
+    /*
+      🔴 ALL FOUR ROWS, AND THAT IS THE DIFFERENCE FROM APPLICATION_STATUS.
+
+      That master seeds ten and serves six, because four were unreachable until
+      Phase 6. This one seeds four and serves four: Offer Lite is the whole of
+      the offer model, and nothing here is waiting on a later phase.
+
+      ⚠️ THE 2.68 LESSON APPLIED ON THE DAY THE TABLE WAS MADE. m_app_application_status
+      shipped in 5A and was not added to this whitelist until 5B needed it for a
+      dropdown — a hole nobody could see, because the only symptom was a filter
+      that would have had to be hardcoded. A new jp_app master enters this file
+      in the same commit that creates it.
+
+      🔴 st.Name, never TeacherFacingName. This key feeds the SCHOOL's controls;
+      every teacher-facing row already carries its own wording from 018.
+    */
+    ELSE IF @MasterCode = 'OFFER_STATUS'
+        SELECT OfferStatusId AS Id, Code, Name, DisplayOrder
+        FROM dbo.m_app_offer_status
+        WHERE Is_Deleted = 0 AND Is_Active = 1 ORDER BY DisplayOrder, Name;
 
     ELSE IF @MasterCode = 'LEDGER_ENTRY_TYPE'
         SELECT EntryTypeId AS Id, Code, Name, DisplayOrder

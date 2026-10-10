@@ -180,14 +180,63 @@ public static class ErrorCodes
     public const string InvalidTransition = "INVALID_TRANSITION";
 
     /// <summary>
-    /// Statuses 7–10 — the offer chain. Seeded so the ids never move, refused
-    /// until Phase 6 builds <c>t_app_offers</c>.
+    /// ⚠️ RETIRED IN 6A. Statuses 7–10 were unreachable until <c>t_app_offers</c>
+    /// existed, and this code said so — a not-yet (2.62) rather than a mistake
+    /// the person made.
     /// </summary>
     /// <remarks>
-    /// Its own code because it is a not-yet (2.62) rather than a mistake the
-    /// person made, and the two deserve different words on the screen.
+    /// <para>
+    /// 🔴 NOTHING PRODUCES IT ANY MORE, and it is kept only so the constant does
+    /// not silently reappear with a new meaning. The offer chain IS reachable;
+    /// the generic status endpoint still refuses it, but for a different reason
+    /// and with a different code — see <see cref="OfferActionRequired"/>.
+    /// </para>
+    /// <para>
+    /// Leaving it in place and still emitted would have told a school to wait
+    /// for a release that had already shipped.
+    /// </para>
     /// </remarks>
     public const string OfferStageUnavailable = "OFFER_STAGE_UNAVAILABLE";
+
+    /// <summary>
+    /// The generic status endpoint was asked for an offer stage (7–10).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 NOT "not yet" — the stages exist. They are produced by the OFFER
+    /// actions, which write the offer row and move the application in one
+    /// transaction. Accepting them here would let a school set an application
+    /// to OfferSent with no offer behind it, or to Hired with nobody having
+    /// accepted anything.
+    /// </para>
+    /// </remarks>
+    public const string OfferActionRequired = "OFFER_ACTION_REQUIRED";
+
+    /// <summary>
+    /// 🔴 A SUCCESS code, and a RACE-ONLY one. This candidate already has a
+    /// live offer.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ It cannot be produced by an ordinary second click: once an offer is
+    /// sent the application sits at OfferSent, and the transition map refuses
+    /// 7 → 7 long before the insert is attempted. The only way to reach the
+    /// unique index is for two sessions to both read Selected and both proceed
+    /// — which is exactly what <c>offers.mjs</c> arranges, because a CATCH that
+    /// has never fired is one you are assuming (the 3C lesson).
+    /// </para>
+    /// </remarks>
+    public const string AlreadyOffered = "ALREADY_OFFERED";
+
+    /// <summary>
+    /// The offer is no longer open — answered by the teacher, or withdrawn by
+    /// the school.
+    /// </summary>
+    /// <remarks>
+    /// Usually a second tab rather than a race, so the message names which of
+    /// the three it was instead of saying "invalid".
+    /// </remarks>
+    public const string OfferNotLive = "OFFER_NOT_LIVE";
 
     /// <summary>
     /// The unique index refused the insert and the row it collided with was

@@ -215,6 +215,10 @@ public static class DependencyInjection
         services.AddScoped<IApplicantService, ApplicantService>();
         services.AddScoped<ITeacherApplicationService, TeacherApplicationService>();
 
+        // Phase 6A — Offer Lite.
+        services.AddScoped<IOfferRepository, OfferRepository>();
+        services.AddScoped<IOfferService, OfferService>();
+
         // Public service interfaces — the boundary the API talks to.
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserService, UserService>();

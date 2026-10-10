@@ -45,12 +45,18 @@ GO
   movement between them. A screen may draw whatever buttons it likes; this
   decides.
 
-      1 Applied      -> 2 Viewed · 3 Shortlisted · 6 Rejected
-      2 Viewed       -> 3 Shortlisted · 4 Interview · 6 Rejected
-      3 Shortlisted  -> 4 Interview · 5 Selected · 6 Rejected
-      4 Interview    -> 5 Selected · 6 Rejected
-      5 Selected     -> 6 Rejected
-      6 Rejected     -> (nothing)
+      1 Applied        -> 2 Viewed · 3 Shortlisted · 6 Rejected
+      2 Viewed         -> 3 Shortlisted · 4 Interview · 6 Rejected
+      3 Shortlisted    -> 4 Interview · 5 Selected · 6 Rejected
+      4 Interview      -> 5 Selected · 6 Rejected
+      5 Selected       -> 6 Rejected · 7 OfferSent
+      6 Rejected       -> (nothing)
+
+      --- Phase 6A, the offer chain ---
+      7 OfferSent      -> 8 OfferAccepted · 9 OfferDeclined · 5 Selected
+      8 OfferAccepted  -> 10 Hired
+      9 OfferDeclined  -> 7 OfferSent · 6 Rejected
+     10 Hired          -> (nothing)
 
   ⚠️ 🔴 REJECTED IS TERMINAL, AND THAT IS A DECISION, NOT AN OVERSIGHT.
   A rejected teacher has been told "not selected". Moving them back to
@@ -59,13 +65,50 @@ GO
   school that rejected somebody by mistake re-opens the conversation outside
   the product, or the teacher applies again to a new posting.
 
-  ⚠️ 🔴 7..10 (the offer chain) ARE REFUSED OUTRIGHT. They exist in the master
-  because the ids are a contract, but t_app_offers is Phase 6 and there is no
-  action that could legitimately produce them. This function returning 0 for
-  them is the guard; the verification proves it by trying every one.
+  ---------------------------------------------------------------------------
+  🔴 PHASE 6A — 7..10 ARE IN THE MAP NOW, AND THE EDGES ARE DECISIONS
+  ---------------------------------------------------------------------------
+  Until 6A this function refused 7..10 outright: the ids were a contract but
+  t_app_offers did not exist, so no action could legitimately produce them.
+  It exists, and each new edge below was chosen rather than fallen into.
 
-  ⚠️ Selected -> 5 is NOT terminal: Selected -> Rejected stays open, because an
-  offer can fall through before Phase 6 exists to model it properly.
+  **5 Selected -> 7 OfferSent, and nothing else reaches 7 from the interview
+  side.** An offer follows a decision. Allowing 3 or 4 -> 7 would let a school
+  offer somebody it has not recorded selecting, and the application history
+  would skip the step the school actually took.
+
+  **7 -> 5 is how a WITHDRAWAL lands.** The school pulled its own offer; the
+  candidate is still selected, and the next offer uses the ordinary 5 -> 7
+  edge. The alternative — inventing a "withdrawn" application status — would
+  have put the OFFER's state into the APPLICATION's machine, which is the
+  confusion 025's header exists to prevent.
+
+  **9 OfferDeclined -> 7 OfferSent: a SECOND offer after a decline IS allowed.**
+  The filtered unique index is on LIVE offers only, so a declined offer does
+  not block a new one, and the question is whether the product should. It
+  should: a teacher declining ₹40,000 and accepting ₹45,000 is an ordinary
+  negotiation, and refusing it would push that conversation outside the
+  product where nothing is recorded. ⚠️ The application's history carries the
+  whole trail — OfferSent, OfferDeclined, OfferSent — so "how many times did we
+  go back to this person" is answerable. Nothing is overwritten.
+
+  **Withdrawn is the same answer for the same reason**, and arrives at it by a
+  different route: withdrawal returns the application to 5, so a re-offer is
+  not a special case at all — it is the first case again.
+
+  **9 -> 6 Rejected**, because a school whose offer was declined must be able
+  to close the application rather than leave it open forever.
+
+  **8 OfferAccepted -> 10 Hired, and 10 is terminal.** Acceptance and hiring are
+  separate on purpose: a teacher accepts, and the school confirms they actually
+  started. Collapsing them would record people as hired who never arrived.
+
+  ⚠️ 🔴 AND THE GENERIC STATUS ENDPOINT STILL REFUSES ALL FOUR. The map says
+  what is legal; USP_SetApplicationStatus additionally refuses 7..10 because
+  they are driven by the OFFER actions, which write the offer row and move the
+  application in one transaction. Without that, a school could set an
+  application to OfferSent with no offer behind it, or to Hired with nobody
+  having accepted anything. One map, one narrower caller — see that procedure.
 ==============================================================================*/
 CREATE OR ALTER FUNCTION dbo.fn_ApplicationTransitionAllowed
 (
@@ -80,20 +123,26 @@ BEGIN
     -- as a refusal.
     IF @FromStatusId = @ToStatusId RETURN 0;
 
-    -- 🔴 The offer chain is unreachable until Phase 6, whatever it is asked.
-    IF @ToStatusId NOT IN (1, 2, 3, 4, 5, 6) RETURN 0;
+    -- Nothing outside the master's ten is a status at all.
+    IF @ToStatusId NOT IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) RETURN 0;
 
     -- Nothing returns TO Applied. It is where an application begins, and
     -- putting one back would erase the fact that a school had seen it.
     IF @ToStatusId = 1 RETURN 0;
 
     RETURN CASE
-        WHEN @FromStatusId = 1 AND @ToStatusId IN (2, 3, 6) THEN 1
-        WHEN @FromStatusId = 2 AND @ToStatusId IN (3, 4, 6) THEN 1
-        WHEN @FromStatusId = 3 AND @ToStatusId IN (4, 5, 6) THEN 1
-        WHEN @FromStatusId = 4 AND @ToStatusId IN (5, 6)    THEN 1
-        WHEN @FromStatusId = 5 AND @ToStatusId = 6          THEN 1
-        ELSE 0                       -- 6 Rejected is terminal
+        WHEN @FromStatusId = 1 AND @ToStatusId IN (2, 3, 6)    THEN 1
+        WHEN @FromStatusId = 2 AND @ToStatusId IN (3, 4, 6)    THEN 1
+        WHEN @FromStatusId = 3 AND @ToStatusId IN (4, 5, 6)    THEN 1
+        WHEN @FromStatusId = 4 AND @ToStatusId IN (5, 6)       THEN 1
+        WHEN @FromStatusId = 5 AND @ToStatusId IN (6, 7)       THEN 1
+
+        -- Phase 6A. See the header for why each of these edges exists.
+        WHEN @FromStatusId = 7 AND @ToStatusId IN (5, 8, 9)    THEN 1
+        WHEN @FromStatusId = 8 AND @ToStatusId = 10            THEN 1
+        WHEN @FromStatusId = 9 AND @ToStatusId IN (6, 7)       THEN 1
+
+        ELSE 0                       -- 6 Rejected and 10 Hired are terminal
     END;
 END
 GO
@@ -334,18 +383,43 @@ BEGIN
     END
 
     /*
-      🔴 THE MAP DECIDES. Two distinct codes, because the screen and the person
-      need different things from them:
+      🔴 THE MAP DECIDES WHAT IS LEGAL. THIS ENDPOINT IS NARROWER THAN THE MAP.
 
-        OFFER_STAGE_UNAVAILABLE  — "that arrives in a later release" (2.62's
-                                   not-yet), not a mistake the person made
-        INVALID_TRANSITION       — "you cannot go from here to there", which is
-                                   about this application's history
+      Two distinct codes, because the screen and the person need different
+      things from them:
+
+        OFFER_ACTION_REQUIRED  — "that stage is reached by sending, accepting,
+                                 declining or withdrawing an OFFER, not by
+                                 picking a stage here"
+        INVALID_TRANSITION     — "you cannot go from here to there", which is
+                                 about this application's history
+
+      ⚠️ 6A RETIRED OFFER_STAGE_UNAVAILABLE FROM THIS PATH. That code meant
+      "the product does not have offers yet" — 2.62's not-yet — and it stopped
+      being true the day t_app_offers shipped. Leaving it would have told a
+      school to wait for a release that had already happened.
+
+      🔴 AND THE REFUSAL ITSELF STAYS, which is the part worth reading twice.
+      fn_ApplicationTransitionAllowed now permits 5 -> 7, 7 -> 8, 8 -> 10 and
+      the rest — but every one of those is produced by an OFFER action that
+      writes the offer row and moves the application in ONE transaction. If
+      this endpoint also accepted them, a school could set an application to
+      OfferSent with no offer behind it, or to Hired with nobody having
+      accepted anything, and the two tables would disagree with nothing
+      erroring.
     */
+    IF @ToStatusId IN (7, 8, 9, 10)
+    BEGIN
+        SELECT 0 AS [Status], 'OFFER_ACTION_REQUIRED' AS Code,
+               N'Offer stages are set by sending, accepting, declining or withdrawing an offer.' AS [Message],
+               NULL AS Id;
+        RETURN;
+    END
+
     IF @ToStatusId NOT IN (1, 2, 3, 4, 5, 6)
     BEGIN
-        SELECT 0 AS [Status], 'OFFER_STAGE_UNAVAILABLE' AS Code,
-               N'Offers arrive in a later release. This application cannot be moved there yet.' AS [Message],
+        SELECT 0 AS [Status], 'VALIDATION_FAILED' AS Code,
+               N'That is not a stage an application can be in.' AS [Message],
                NULL AS Id;
         RETURN;
     END

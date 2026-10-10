@@ -323,6 +323,11 @@ GO
 :r $(DbRoot)\jp_app\01_tables\023_application_masters.sql
 :r $(DbRoot)\jp_app\01_tables\024_t_app_applications.sql
 
+-- Phase 6A — Offer Lite. 025 also flips 023's four offer statuses to
+-- reachable, which is why it runs after the applications tables and not before.
+:r $(DbRoot)\jp_app\01_tables\025_offer_masters.sql
+:r $(DbRoot)\jp_app\01_tables\026_t_app_offers.sql
+
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
 -- shapes the schema. It is listed here so a database rebuilt from scratch ends
@@ -391,6 +396,10 @@ GO
 -- are two different shapes, and one procedure with an audience flag eventually
 -- shows the wrong one to the wrong person.
 :r $(DbRoot)\jp_app\04_procedures\017_application_reads.sql
+
+-- Phase 6A. Depends on fn_ApplicationTransitionAllowed (016), which owns the
+-- machine these procedures drive.
+:r $(DbRoot)\jp_app\04_procedures\018_offers.sql
 
 -- PRE-5 (G26). The five masters that live in jp_app rather than jp_mdm, served
 -- through the same whitelist-driven shape as jp_mdm's USP_GetMaster. Without

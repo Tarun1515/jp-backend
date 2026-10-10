@@ -158,6 +158,25 @@ public static class AppConstants
         /// </summary>
         public const string ResumeDownload = "RESUME.DOWNLOAD";
 
+        /*
+          ---- Phase 6A, offers -------------------------------------------
+
+          🔴 TWO PERMISSIONS FOR ONE DOCUMENT, AND THE SPLIT IS THE POINT.
+
+          jp_sso's seed gives SENIOR_HR only OFFER.CREATE, and SCHOOL_OWNER
+          both. So an HR lead can draft and send what the school has agreed,
+          and the owner is the one who signs off — which is the same shape as
+          JOB.CREATE / JOB.PUBLISH one subsystem over.
+
+          ⚠️ OfferApprove is ALSO what t_mdm_request_levels configures for
+          OFFER_APPROVAL: the level's RoleId is SCHOOL_OWNER because that is
+          the role holding this permission. Two places, one fact — and if they
+          are ever changed apart, the approval engine will refuse somebody the
+          UI offered a button to.
+        */
+        public const string OfferCreate = "OFFER.CREATE";
+        public const string OfferApprove = "OFFER.APPROVE";
+
         /// <summary>
         /// Seeded in Phase 1A, held by SUPER_ADMIN alone. Phase 2.5 gates the
         /// plan × feature matrix on it rather than seeding a new permission —

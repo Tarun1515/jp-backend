@@ -50,13 +50,39 @@ GO
 */
 DECLARE @ROLE_ADMIN int = 2;
 
+/*
+  🔴 PHASE 6A — OFFER_APPROVAL IS THE SCHOOL'S OWN APPROVAL, NOT THE PLATFORM'S.
+
+  The other three request types are things an ADMINISTRATOR decides: a school
+  registering, a teacher being verified, a campus being added. An offer is
+  different — it is a school's internal sign-off on its own document, and no
+  administrator should be in that loop.
+
+  jp_sso's permission seed already says who: SCHOOL_OWNER holds OFFER.APPROVE
+  and OFFER.CREATE; SENIOR_HR holds OFFER.CREATE alone. So the approver is the
+  owner, and this row says so.
+
+  ⚠️ IT WAS SEEDED AS @ROLE_ADMIN IN 2C, alongside the three admin types,
+  because OFFER_APPROVAL was a placeholder with nothing riding it. Nothing was
+  broken by that — no offer existed to approve — and nothing would have
+  surfaced it either, which is why it is being corrected on the day the first
+  offer is written rather than the day somebody notices.
+
+  🔴 AND A SECOND LEVEL IS A ROW, NOT A RELEASE. A school that wants
+  Senior HR -> Owner adds one row here (LevelNumber 2, IsFinalLevel 1, its own
+  OrganizationUid) and flips level 1 to IsFinalLevel 0. 6A-0 proved the engine
+  actually walks that path — reject, resubmit, role scoping and concurrency, all
+  at level 2 — so this is configuration, and the procedure does not change.
+*/
+DECLARE @ROLE_SCHOOL_OWNER int = 4;
+
 MERGE dbo.t_mdm_request_levels AS tgt
 USING (VALUES
         -- RequestTypeId, LevelNumber, RoleId,      IsFinalLevel
         (1, CAST(1 AS tinyint), @ROLE_ADMIN, CAST(1 AS tinyint)),  -- SCHOOL_REG
         (2, CAST(1 AS tinyint), @ROLE_ADMIN, CAST(1 AS tinyint)),  -- TEACHER_VERIFY
         (3, CAST(1 AS tinyint), @ROLE_ADMIN, CAST(1 AS tinyint)),  -- BRANCH_ADD
-        (4, CAST(1 AS tinyint), @ROLE_ADMIN, CAST(1 AS tinyint))   -- OFFER_APPROVAL
+        (4, CAST(1 AS tinyint), @ROLE_SCHOOL_OWNER, CAST(1 AS tinyint))  -- OFFER_APPROVAL (6A)
       ) AS src (RequestTypeId, LevelNumber, RoleId, IsFinalLevel)
     ON  tgt.RequestTypeId = src.RequestTypeId
     AND tgt.LevelNumber   = src.LevelNumber
