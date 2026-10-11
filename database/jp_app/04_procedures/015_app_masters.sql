@@ -198,6 +198,23 @@ BEGIN
         FROM dbo.m_app_invite_status
         WHERE Is_Deleted = 0 AND Is_Active = 1 ORDER BY DisplayOrder, Name;
 
+    /*
+      ⚠️ 6C, and it is here in the SAME COMMIT as the table — the
+      APPLICATION_STATUS lesson. That master shipped in 5A and was not served
+      until 5B, and the only symptom in between was a hardcoded filter nobody
+      could see was hardcoded.
+
+      🔴 AudienceId and SendEmail are deliberately NOT returned. A screen
+      filtering a notification list needs the id, the code and the name; who
+      else receives this kind of event, and whether it also leaves by email, are
+      facts about the product that a client has no use for and no business
+      reading.
+    */
+    ELSE IF @MasterCode = 'NOTIFICATION_TYPE'
+        SELECT NotificationTypeId AS Id, Code, Name, DisplayOrder
+        FROM dbo.m_app_notification_type
+        WHERE Is_Deleted = 0 AND Is_Active = 1 ORDER BY DisplayOrder, Name;
+
     ELSE IF @MasterCode = 'LEDGER_ENTRY_TYPE'
         SELECT EntryTypeId AS Id, Code, Name, DisplayOrder
         FROM dbo.m_app_ledger_entry_types

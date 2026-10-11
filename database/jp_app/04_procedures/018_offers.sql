@@ -160,6 +160,21 @@ BEGIN
             (ApplicationId, FromStatusId, ToStatusId, ChangedByUserId, Remarks, ChangedOn, CreatedBy)
         VALUES (@ApplicationId, @FromStatusId, 7, @ActorUserId, NULL, @Now, @ActorUserId);
 
+        /*
+          ---- 🔴 PHASE 6C: THE TEACHER IS TOLD, IN THIS TRANSACTION ----------
+
+          An offer is the one event in the product that a teacher must not find
+          out about late — it has a joining date in it — so OFFER_SENT is also
+          one of the types that leaves by email (029).
+
+          ⚠️ Inside the transaction, like the application move above it: an
+          offer that exists has been announced, and a rolled-back one has not.
+
+          🔒 The notification names the school and the job. It does NOT name the
+          salary — that is in the offer, one tap away, and type 5 sends an email.
+        */
+        EXEC dbo.USP_NotifyOffer @OfferId = @OfferId, @Event = 'SENT';
+
         COMMIT TRANSACTION;
 
         SELECT 1 AS [Status], NULL AS Code, N'Offer sent.' AS [Message], @OfferId AS Id;
@@ -342,6 +357,23 @@ BEGIN
             (ApplicationId, FromStatusId, ToStatusId, ChangedByUserId, Remarks, ChangedOn, CreatedBy)
         VALUES (@ApplicationId, @FromStatusId, @NewAppStatus, @ActorUserId, @TeacherRemarks, @Now, @ActorUserId);
 
+        /*
+          ---- 🔴 PHASE 6C: THE SCHOOL'S TEAM IS TOLD ------------------------
+
+          The teacher answered, so this one travels the other way. Which type is
+          decided by the EVENT rather than by re-reading the row — 021's header
+          explains why: a declined offer can be followed by a new one (2.73), so
+          the row's status may already describe something later.
+
+          ⚠️ @TeacherRemarks is NOT passed on. A teacher declining may say
+          something frank about the salary, and it belongs in the offer record
+          the school reads deliberately — not in a line that also goes out as an
+          email to everybody on the team.
+        */
+        DECLARE @OfferEvent varchar(20) = CASE WHEN @Accept = 1 THEN 'ACCEPTED' ELSE 'DECLINED' END;
+
+        EXEC dbo.USP_NotifyOffer @OfferId = @OfferId, @Event = @OfferEvent;
+
         COMMIT TRANSACTION;
 
         SELECT 1 AS [Status], NULL AS Code,
@@ -474,6 +506,20 @@ BEGIN
                 (ApplicationId, FromStatusId, ToStatusId, ChangedByUserId, Remarks, ChangedOn, CreatedBy)
             VALUES (@ApplicationId, 7, 5, @ActorUserId, @Reason, @Now, @ActorUserId);
 
+        /*
+          ---- 🔴 PHASE 6C: THE TEACHER IS TOLD, AND THIS ONE IS NOT OPTIONAL -
+
+          A withdrawn offer is the case where silence is worst: the teacher is
+          holding something they believe is live, possibly turning down other
+          schools because of it. 029 sends this one by email for the same
+          reason.
+
+          ⚠️ @Reason is NOT passed on. It is the school's own note (018's
+          header), and "we filled the post internally" is not a sentence a
+          school chose to say to this teacher.
+        */
+        EXEC dbo.USP_NotifyOffer @OfferId = @OfferId, @Event = 'WITHDRAWN';
+
         COMMIT TRANSACTION;
 
         SELECT 1 AS [Status], NULL AS Code, N'Offer withdrawn.' AS [Message], @OfferId AS Id;
@@ -572,6 +618,36 @@ BEGIN
         INSERT INTO dbo.t_app_application_status_history
             (ApplicationId, FromStatusId, ToStatusId, ChangedByUserId, Remarks, ChangedOn, CreatedBy)
         VALUES (@ApplicationId, @FromStatusId, 10, @ActorUserId, @Remarks, @Now, @ActorUserId);
+
+        /*
+          ---- 🔴 PHASE 6C: THE TEACHER IS TOLD ------------------------------
+
+          2.73 kept accepting and arriving as two steps on purpose — "accepted"
+          is not "hired". This notification is the teacher's own copy of the
+          second step, which is the one that matters for a record they may be
+          asked about later.
+
+          ⚠️ THE OFFER ID HAS TO BE LOOKED UP, and the reason is 2.73 again:
+          this procedure takes an APPLICATION, because confirming a hire is a
+          statement about the candidate rather than about the document. The
+          accepted offer is what the teacher's notification should point at, so
+          it is resolved here — status 2 is ACCEPTED (025).
+
+          🔴 Written as OfferStatusId = 2 rather than "the most recent offer". A
+          declined offer can be followed by a new one on the same application
+          (2.73), so "most recent" would be right by luck and wrong the first
+          time somebody re-offered after a decline.
+        */
+        DECLARE @HiredOfferId bigint =
+            (SELECT TOP (1) o.OfferId
+             FROM dbo.t_app_offers o
+             WHERE o.ApplicationId = @ApplicationId
+               AND o.OfferStatusId = 2            -- ACCEPTED
+               AND o.Is_Deleted    = 0
+             ORDER BY o.OfferId DESC);
+
+        IF @HiredOfferId IS NOT NULL
+            EXEC dbo.USP_NotifyOffer @OfferId = @HiredOfferId, @Event = 'HIRED';
 
         COMMIT TRANSACTION;
 

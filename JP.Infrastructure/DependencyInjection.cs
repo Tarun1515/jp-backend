@@ -94,6 +94,17 @@ public static class DependencyInjection
         services.AddHostedService<EmailDispatchWorker>();
 
         /*
+          ⚠️ A SECOND WORKER, and the two do different jobs. EmailDispatchWorker
+          drains an in-memory queue that a request put something on.
+          NotificationEmailWorker polls the DATABASE, because notifications are
+          written by SQL inside their event's transaction (021) — so at the
+          moment one is created there is no request in the call stack that knows
+          it happened. It finds them, resolves each recipient's address, and
+          hands the message to the queue above.
+        */
+        services.AddHostedService<NotificationEmailWorker>();
+
+        /*
           The login decoy credential is a SINGLETON, and that matters: it is
           derived with 210,000 PBKDF2 iterations, so building one per request
           would add ~200 ms to every sign-in for no benefit.
@@ -222,6 +233,17 @@ public static class DependencyInjection
         // Phase 6B — teacher search and invitations (🔒 consent path 2).
         services.AddScoped<IInviteRepository, InviteRepository>();
         services.AddScoped<IInviteService, InviteService>();
+
+        /*
+          Phase 6C — notifications.
+
+          🔒 The service takes a ClaimsPrincipal on every method and has no
+          overload that accepts a user id, so there is no way for a caller to
+          ask for somebody else's rows. 030 went further and removed the column
+          that would make a cross-user query expressible at all.
+        */
+        services.AddScoped<INotificationRepository, NotificationRepository>();
+        services.AddScoped<INotificationService, NotificationService>();
 
         // Public service interfaces — the boundary the API talks to.
         services.AddScoped<IAuthService, AuthService>();

@@ -204,6 +204,22 @@ BEGIN
             RETURN;
         END
 
+        /*
+          ---- 🔴 PHASE 6C: THE TEACHER IS TOLD, AFTER THE METER AGREED ------
+
+          Position matters here. This sits BELOW the refusal above, so a school
+          that has run out of invitations has not notified anybody — the
+          rollback would have taken the invite row and the notification
+          together, but writing it earlier would have meant composing a
+          notification for an invitation that was about to disappear.
+
+          🔒 The notification carries the school's name and the school's own
+          message, and nothing about the school's contact details or the
+          teacher's. An invitation reaching somebody is not consent in either
+          direction (2.56) — consent is the ACCEPTED row and nothing else.
+        */
+        EXEC dbo.USP_NotifyInvite @InviteId = @InviteId, @Event = 'RECEIVED';
+
         COMMIT TRANSACTION;
 
         SELECT 1 AS [Status], @Code AS Code,
@@ -375,6 +391,28 @@ BEGIN
                NULL AS Id;
         RETURN;
     END
+
+    /*
+      ---- 🔴 PHASE 6C: THE SCHOOL'S TEAM IS TOLD ---------------------------
+
+      ⚠️ This procedure has no explicit transaction — the UPDATE above is a
+      single statement and is atomic on its own. So this call is placed after
+      the @@ROWCOUNT guard, where the answer is known to have been recorded: a
+      CONCURRENCY_CONFLICT returns before reaching here, and nobody is told
+      about an answer that was not written.
+
+      🔒 ACCEPTING IS CONSENT (2.56, path 2) and the school is about to be able
+      to see this teacher's contact — but not because of this notification.
+      `fn_TeacherContactUnlocked` reads the ACCEPTED row itself; this line
+      only says it happened. Deleting every notification in the table would
+      change nothing about who can see whose number.
+
+      ⚠️ @TeacherRemarks is not passed on, for the same reason the offer's is
+      not: it is stored on the invitation the school reads deliberately.
+    */
+    DECLARE @InviteEvent varchar(20) = CASE WHEN @Accept = 1 THEN 'ACCEPTED' ELSE 'IGNORED' END;
+
+    EXEC dbo.USP_NotifyInvite @InviteId = @InviteId, @Event = @InviteEvent;
 
     SELECT 1 AS [Status], NULL AS Code,
            CASE WHEN @Accept = 1 THEN N'Invitation accepted.' ELSE N'Invitation declined.' END AS [Message],

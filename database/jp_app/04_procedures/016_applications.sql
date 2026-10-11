@@ -304,6 +304,50 @@ BEGIN
           AND Is_Deleted     = 0
           AND (JobId IS NULL OR JobId = @JobId);
 
+        /*
+          ---- 🔴 PHASE 6C: THE SCHOOL IS TOLD, IN THIS TRANSACTION ----------
+
+          Same database, so the atomic guarantee costs nothing: an application
+          that exists has its notification, and a rolled-back one has none.
+          021's header argues this against 2.48 — that decision is about
+          CROSS-database orchestration, which this is not.
+
+          ⚠️ Fan-out is branch-scoped (021), so a viewer bound to another campus
+          is not told about an applicant they would get a 404 for.
+
+          ⚠️ The teacher's NAME is in the body, and that is not a 2.56 question
+          — the browse profile returns the name to any school, and this school
+          now has an application from them anyway. No email, no mobile, no
+          resume path: those are only ever served by
+          USP_GetTeacherContactForSchool.
+
+          🔴 The title is stored, not rendered later (030's header): if the job
+          is renamed tomorrow, this notification still says what the school was
+          actually told today.
+        */
+        DECLARE @NotifJobTitle nvarchar(200) =
+            (SELECT JobTitle FROM dbo.t_app_jobs WHERE JobId = @JobId);
+        DECLARE @NotifTeacherName nvarchar(150) =
+            (SELECT FullName FROM dbo.t_app_teachers WHERE TeacherId = @TeacherId);
+        DECLARE @NotifAppUid uniqueidentifier =
+            (SELECT ApplicationUid FROM dbo.t_app_applications WHERE ApplicationId = @Id);
+
+        DECLARE @NotifBody nvarchar(1000) =
+            @NotifTeacherName + N' applied to ' + @NotifJobTitle + N'.';
+
+        /* Relative, inside jp-school — 030's header on why it is not absolute. */
+        DECLARE @NotifUrl nvarchar(300) = N'/applicants/' + CAST(@Id AS nvarchar(20));
+
+        EXEC dbo.USP_CreateSchoolNotifications
+             @SchoolId           = @SchoolId,
+             @BranchId           = @BranchId,
+             @NotificationTypeId = 1,                 -- APPLICATION_RECEIVED
+             @Title              = N'New application',
+             @Body               = @NotifBody,
+             @ActionUrl          = @NotifUrl,
+             @RefEntityTypeId    = 1,
+             @RefEntityUid       = @NotifAppUid;
+
         SET @Status = 1;
         COMMIT TRANSACTION;
     END TRY
@@ -486,6 +530,32 @@ BEGIN
             (ApplicationId, FromStatusId, ToStatusId, ChangedByUserId, Remarks, ChangedOn, CreatedBy)
         VALUES (@ApplicationId, @FromStatusId, @ToStatusId, @ActorUserId, @Remarks, @Now, @ActorUserId);
 
+        /*
+          ---- 🔴 PHASE 6C: THE TEACHER IS TOLD, IN THIS TRANSACTION ----------
+
+          Which stages notify, and the wording, live in
+          USP_NotifyApplicationStatus — because this is not the only path that
+          produces these moves. USP_MarkApplicationViewed takes an application
+          from Applied to Seen whenever a school OPENS it, which is how stage 2
+          actually happens, and that procedure calls the same one.
+
+          ⚠️ Two call sites, one decision. Had each written its own, the teacher
+          would be told different things depending on which path the school
+          happened to take, and the difference would never show up in a test
+          that only exercised one of them.
+
+          🔴 THE SILENCES ARE THE DESIGN, and 5 is the one to read twice:
+            1 Applied     — the teacher just did this; telling them is noise.
+            4 Interviewed — recorded after the fact; they were there.
+            5 Selected    — the school's INTERNAL decision. What reaches the
+                            teacher is the OFFER (2.73's two machines). Telling
+                            them here would have them expecting an offer the
+                            school has not sent, and may never send.
+        */
+        EXEC dbo.USP_NotifyApplicationStatus
+             @ApplicationId = @ApplicationId,
+             @ToStatusId    = @ToStatusId;
+
         SET @Status = 1;
         COMMIT TRANSACTION;
     END TRY
@@ -567,6 +637,20 @@ BEGIN
     INSERT INTO dbo.t_app_application_status_history
         (ApplicationId, FromStatusId, ToStatusId, ChangedByUserId, Remarks, ChangedOn, CreatedBy)
     VALUES (@ApplicationId, 1, 2, @ActorUserId, N'Opened by the school', @Now, @ActorUserId);
+
+    /*
+      ---- 🔴 PHASE 6C: AND THIS IS THE PATH THAT ACTUALLY FIRES IT ----------
+
+      A school reaching stage 2 by picking it from a dropdown is rare; a school
+      reaching it by OPENING the application is what happens all day. Hooking
+      only USP_SetApplicationStatus would have left "Seen by the school" as a
+      notification the product could technically send and never did.
+
+      ⚠️ Same procedure, so the two paths cannot drift apart.
+    */
+    EXEC dbo.USP_NotifyApplicationStatus
+         @ApplicationId = @ApplicationId,
+         @ToStatusId    = 2;
 
     COMMIT TRANSACTION;
 

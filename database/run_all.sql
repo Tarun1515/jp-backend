@@ -333,6 +333,12 @@ GO
 :r $(DbRoot)\jp_app\01_tables\027_invite_masters.sql
 :r $(DbRoot)\jp_app\01_tables\028_t_app_teacher_invites.sql
 
+-- Phase 6C — notifications. 🔒 030 has NO SchoolId and no OrganizationUid: the
+-- scope is RecipientUserUid, and the absent column is the design. 029 carries
+-- build-time guards that every type's audience is the teacher or the school.
+:r $(DbRoot)\jp_app\01_tables\029_notification_masters.sql
+:r $(DbRoot)\jp_app\01_tables\030_t_app_notifications.sql
+
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
 -- shapes the schema. It is listed here so a database rebuilt from scratch ends
@@ -410,6 +416,11 @@ GO
 -- fn_EffectiveJobStatusId (014).
 :r $(DbRoot)\jp_app\04_procedures\019_teacher_search.sql
 :r $(DbRoot)\jp_app\04_procedures\020_invites.sql
+
+-- Phase 6C. 021's creators run inside each event's own transaction (same
+-- database, so the atomic guarantee is free); email is dispatched afterwards.
+-- Depends on fn_VisibleBranches (003) for the school fan-out.
+:r $(DbRoot)\jp_app\04_procedures\021_notifications.sql
 
 -- PRE-5 (G26). The five masters that live in jp_app rather than jp_mdm, served
 -- through the same whitelist-driven shape as jp_mdm's USP_GetMaster. Without
