@@ -182,6 +182,30 @@ VALUES
 ('TEACHER_PROFILE',         NULL, N'My profile',            3, N'/profile',             'user',             'PROFILE.EDIT',        20, 1, 1),
 ('TEACHER_JOBS',            NULL, N'Find jobs',             3, N'/jobs',                'search',           'JOB.VIEW',            30, 1, 1),
 ('TEACHER_APPLICATIONS',    NULL, N'My applications',       3, N'/applications',        'send',             NULL,                  40, 1, 1),
+
+/*
+  🔴 PHASE 6C-2 — TEACHER_OFFERS. A MENU IS DATA (2.37).
+
+  Offers have existed since 6A and the teacher could answer one over HTTP, with
+  no way to FIND one: there was no row here, so there was no link, and the only
+  route in was a notification. This is the row.
+
+  ⚠️ PermissionCode NULL, deliberately. USP_GetUserMenus gates on
+  "UserTypeId matches AND (the row needs no permission OR the user holds it)",
+  and an offer belongs to the teacher it was sent to — there is no permission
+  that could describe "may see my own offers". The server matches every read on
+  the caller's own UserUid.
+
+  ⚠️ DisplayOrder 45, between My applications (40) and Saved jobs (50), because
+  that is where it sits in the story: you applied, you were offered, and saved
+  jobs are a different activity entirely.
+
+  🔴 The route arrives in the SAME commit — this file's own header says a menu
+  row pointing at a route that does not exist is a 404 in every teacher's
+  sidebar, and a route with no row is invisible.
+*/
+('TEACHER_OFFERS',          NULL, N'My offers',             3, N'/offers',              'file-signature',   NULL,                  45, 1, 1),
+
 ('TEACHER_SAVED_JOBS',      NULL, N'Saved jobs',            3, N'/saved-jobs',          'bookmark',         NULL,                  50, 1, 1),
 ('TEACHER_INVITATIONS',     NULL, N'Invitations',           3, N'/invitations',         'mail',             NULL,                  60, 1, 1),
 ('TEACHER_DOCUMENTS',       NULL, N'Documents',             3, N'/documents',           'file-text',        NULL,                  70, 1, 1),
