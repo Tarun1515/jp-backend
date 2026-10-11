@@ -230,6 +230,18 @@ internal sealed class BillingService : IBillingService
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(request);
 
+        /*
+          🔒 BILLING.MANAGE — a plan change is a financial commitment.
+
+          6.5A had no check here, which let any member of a school commit it to
+          a payment: a SCHOOL_VIEWER is read-only by design, and this was the
+          one action that escaped that. See AppConstants.BillingManage.
+
+          ⚠️ Checked HERE and not on the catalog or the panel. Reading what plan
+          you are on is a property of the account, not a privilege.
+        */
+        EnsureCanManageBilling(caller);
+
         var ownerUid = OwnerUidOf(caller);
         var userTypeId = (int)caller.GetUserType();
         var orgUid = caller.GetOrganizationUid();
@@ -516,6 +528,25 @@ internal sealed class BillingService : IBillingService
         caller.GetUserType() == UserType.Teacher
             ? caller.GetUserUid()
             : caller.RequireOrganizationUid();
+
+    /// <summary>
+    /// 🔒 BILLING.MANAGE — SCHOOL_OWNER and TEACHER only (jp_sso 007).
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ No user-type check beside it, unlike <see cref="EnsureCanVerify"/>.
+    /// The permission is held by one school role and the teacher role, so the
+    /// type is already implied — and adding a redundant type check would be a
+    /// second answer to a question the grant already answers, which is how the
+    /// two come to disagree.
+    /// </remarks>
+    private static void EnsureCanManageBilling(ClaimsPrincipal caller)
+    {
+        if (!caller.HasPermission(AppConstants.PermissionCodes.BillingManage))
+        {
+            throw new ForbiddenException(
+                "You do not have permission to change this account's plan.");
+        }
+    }
 
     /// <summary>
     /// 🔒 PAYMENT.VERIFY, held by SUPER_ADMIN alone and by no school or teacher

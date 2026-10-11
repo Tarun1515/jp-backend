@@ -147,6 +147,11 @@ GO
 -- item visible to everyone rather than to nobody.
 :r $(DbRoot)\jp_sso\03_seed\005_seed_menus.sql
 
+-- Phase 6.5B. BILLING.MANAGE - who may commit the account to money.
+-- It runs AFTER 005_seed_menus because its own guard asserts that the billing
+-- MENU rows carry no PermissionCode, and those rows are created there.
+:r $(DbRoot)\jp_sso\03_seed\007_seed_billing_manage.sql
+
 -- ---- programmability -------------------------------------------------------
 -- Functions first: the Phase 1B procedures depend on them.
 PRINT '  Functions and procedures ...';

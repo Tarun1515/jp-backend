@@ -133,6 +133,7 @@ VALUES
   a coming-soon page would be a working screen hidden behind a stub.
 */
 ('ADMIN_PLANS',             NULL, N'Plans and features',    1, N'/settings/plans',        'sliders-horizontal', 'SETTINGS.MANAGE',   55, 1, 1),
+('ADMIN_PAYMENTS',          NULL, N'Payments',              1, N'/billing/payments',    'credit-card',      'PAYMENT.VERIFY',      57, 1, 1),
 ('ADMIN_CMS',               NULL, N'CMS',                   1, N'/cms',                   'newspaper',        'CMS.MANAGE',          60, 1, 1),
 ('ADMIN_REPORTS',           NULL, N'Analytics',             1, N'/reports',               'bar-chart-3',      'REPORT.VIEW',         70, 1, 1),
 ('ADMIN_SETTINGS',          NULL, N'Settings',              1, N'/settings',              'settings',         'SETTINGS.MANAGE',     80, 1, 1),
@@ -171,6 +172,35 @@ VALUES
 ('SCHOOL_OFFERS',           NULL, N'Offers',                2, N'/offers',               'file-signature',   'OFFER.CREATE',        70, 1, 1),
 ('SCHOOL_USERS',            NULL, N'Team',                  2, N'/users',                'users',            'USER.MANAGE',         80, 1, 1),
 ('SCHOOL_NOTIFICATIONS',    NULL, N'Notifications',         2, N'/notifications',        'bell',             NULL,                  90, 1, 1),
+/*
+  🔴 PHASE 6.5B — BILLING. THREE ROWS, AND A MENU IS DATA (2.37).
+
+  The backend shipped in 6.5A with no way in: the routes existed and nothing
+  linked to them. These are the links.
+
+  ⚠️ THE TWO ACCOUNT-FACING ROWS CARRY NO PermissionCode, and that is not an
+  oversight. "What plan am I on" is a property of the ACCOUNT, not something a
+  role grants — USP_GetUserMenus gates on "UserTypeId matches AND (the row
+  needs no permission OR the user holds it)", and there is no permission that
+  could describe "may see my own plan". The server scopes every read to the
+  caller's own owner uid (2.39, 2.51). The same reasoning the notification and
+  offer rows already carry.
+
+  🔴 THE ADMIN ROW IS GATED ON PAYMENT.VERIFY, which SUPER_ADMIN alone holds —
+  so a Verification or Moderation administrator never sees the link. jp_sso's
+  006 seed asserts the CLOSED SET of holders, because a school verifying its
+  own payment is the entire attack.
+
+  ⚠️ DisplayOrder: school 95 and teacher 85, i.e. AFTER Notifications in both —
+  billing is the thing somebody visits occasionally and deliberately, not part
+  of the daily loop. Admin 57, right after Plans and features (55), because a payment
+  is what a plan costs somebody — and 55 was already taken.
+
+  🔴 Every route arrives in the SAME commit as its row — this file's own header
+  says a menu row pointing at a route that does not exist is a 404 in every
+  sidebar, and a route with no row is invisible.
+*/
+('SCHOOL_BILLING',          NULL, N'Plan and billing',     2, N'/billing',             'credit-card',      NULL,                  95, 1, 1),
 
 -- Committed in scope (Reports/dashboard), no route yet -> inactive.
 ('SCHOOL_REPORTS',          NULL, N'Reports',               2, N'/reports',              'bar-chart-3',      'REPORT.VIEW',        100, 1, 0),
@@ -209,7 +239,8 @@ VALUES
 ('TEACHER_SAVED_JOBS',      NULL, N'Saved jobs',            3, N'/saved-jobs',          'bookmark',         NULL,                  50, 1, 1),
 ('TEACHER_INVITATIONS',     NULL, N'Invitations',           3, N'/invitations',         'mail',             NULL,                  60, 1, 1),
 ('TEACHER_DOCUMENTS',       NULL, N'Documents',             3, N'/documents',           'file-text',        NULL,                  70, 1, 1),
-('TEACHER_NOTIFICATIONS',   NULL, N'Notifications',         3, N'/notifications',       'bell',             NULL,                  80, 1, 1);
+('TEACHER_NOTIFICATIONS',   NULL, N'Notifications',         3, N'/notifications',       'bell',             NULL,                  80, 1, 1),
+('TEACHER_BILLING',         NULL, N'Plan and billing',     3, N'/billing',             'credit-card',      NULL,                  85, 1, 1);
 
 
 /*------------------------------------------------------------------------------

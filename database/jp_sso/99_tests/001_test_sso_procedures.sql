@@ -400,9 +400,21 @@ FROM dbo.t_sso_users WHERE UserId = @S2UserId;
 EXEC dbo.USP_GetUserClaims @UserId = @TeacherUserId;    -- smoke: must execute
 EXEC dbo.USP_GetUserByUid  @UserUid = @TeacherUid;      -- smoke: must execute
 
+/*
+  🔴 THREE SINCE 6.5B — BILLING.MANAGE joined PROFILE.EDIT and JOB.VIEW.
+
+  A teacher IS the account: there is one teacher role and no team, so
+  withholding the permission that gates a plan change would mean no teacher
+  could ever change plan. jp_sso/03_seed/007 records the reasoning and asserts
+  the closed set of holders (SCHOOL_OWNER and TEACHER).
+
+  ⚠️ CHANGED IN THE SAME COMMIT AS THE GRANT, with the reason — and the
+  assertion still NAMES the three rather than only counting them, because the
+  count alone would pass if a permission were swapped for another.
+*/
 INSERT INTO @Assert (Area, Name, Passed, Detail)
-SELECT 'claims', '[mirror] teacher resolves to 2 permissions (PROFILE.EDIT, JOB.VIEW)',
-       CASE WHEN COUNT(DISTINCT p.PermissionCode) = 2 THEN 1 ELSE 0 END,
+SELECT 'claims', '[mirror] teacher resolves to 3 permissions (PROFILE.EDIT, JOB.VIEW, BILLING.MANAGE)',
+       CASE WHEN COUNT(DISTINCT p.PermissionCode) = 3 THEN 1 ELSE 0 END,
        CONCAT('perms=', COUNT(DISTINCT p.PermissionCode))
 FROM dbo.t_sso_user_roles ur
 JOIN dbo.t_sso_roles r ON r.RoleId = ur.RoleId AND r.Is_Deleted = 0 AND r.Is_Active = 1
@@ -808,8 +820,8 @@ INSERT INTO #Perms EXEC dbo.USP_GetPermissionList;
   payment is the entire attack.
 */
 INSERT INTO @Assert (Area, Name, Passed, Detail)
-SELECT 'lists', 'permission catalogue returns all 24',
-       CASE WHEN COUNT(*) = 24 THEN 1 ELSE 0 END, CONCAT('rows=', COUNT(*)) FROM #Perms;
+SELECT 'lists', 'permission catalogue returns all 25',
+       CASE WHEN COUNT(*) = 25 THEN 1 ELSE 0 END, CONCAT('rows=', COUNT(*)) FROM #Perms;
 
 IF OBJECT_ID('tempdb..#RolePerms') IS NOT NULL DROP TABLE #RolePerms;
 CREATE TABLE #RolePerms (PermissionId int, PermissionCode varchar(50), PermissionName nvarchar(150),
@@ -825,7 +837,19 @@ INSERT INTO #RolePerms EXEC dbo.USP_GetRolePermissions @RoleId = @SuperAdminRole
   NOWHERE else.
 */
 INSERT INTO @Assert (Area, Name, Passed, Detail)
-SELECT 'lists', 'SUPER_ADMIN shows all 24 permissions granted',
+/*
+  ⚠️ 24, NOT 25 — AND THE DIVERGENCE IS THE POINT.
+
+  Phase 6.5B added BILLING.MANAGE, so the catalogue is 25. SUPER_ADMIN does
+  NOT hold it: an administrator CONFIRMS payments (PAYMENT.VERIFY) and does not
+  request plan changes on an account's behalf. 007 asserts that closed set.
+
+  🔴 So this is the first permission in the product that SUPER_ADMIN lacks, and
+  that is deliberate rather than an omission. The two numbers were identical for
+  twenty-four permissions and a reader would reasonably assume they always are
+  — which is exactly why this comment exists beside the 24.
+*/
+SELECT 'lists', 'SUPER_ADMIN holds 24 of the 25 — not BILLING.MANAGE',
        CASE WHEN SUM(CAST(IsGranted AS int)) = 24 THEN 1 ELSE 0 END,
        CONCAT('granted=', SUM(CAST(IsGranted AS int))) FROM #RolePerms;
 

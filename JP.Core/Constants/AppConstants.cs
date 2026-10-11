@@ -228,6 +228,37 @@ public static class AppConstants
         /// </para>
         /// </remarks>
         public const string PaymentVerify = "PAYMENT.VERIFY";
+
+        /// <summary>
+        /// Phase 6.5B. Who may commit the account to a payment.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// 🔴 THE HOLE THIS CLOSED. 6.5A shipped the plan-change endpoint with
+        /// no permission check. The owner comes from the token, so nobody could
+        /// request a plan for somebody else's account — but ANY member of a
+        /// school could request one for their own, including SCHOOL_VIEWER,
+        /// which is read-only by design and whose screens otherwise omit every
+        /// action it cannot take.
+        /// </para>
+        /// <para>
+        /// ⚠️ Found by measuring who gets the new menu row, not by a failing
+        /// test — the row is deliberately ungated, so it appeared for the
+        /// viewer, and that prompted asking what the viewer could then DO.
+        /// </para>
+        /// <para>
+        /// 🔒 Held by SCHOOL_OWNER and TEACHER only (a teacher IS the account).
+        /// jp_sso/03_seed/007 asserts that CLOSED SET, because the failure that
+        /// matters is an extra holder.
+        /// </para>
+        /// <para>
+        /// ⚠️ It gates REQUESTING a change and nothing else. Seeing the plan
+        /// panel stays open to everyone: an HR about to post a job needs to
+        /// know this month's allowance, and hiding it would mean they discover
+        /// the limit by being refused by it.
+        /// </para>
+        /// </remarks>
+        public const string BillingManage = "BILLING.MANAGE";
     }
 
     /// <summary>Seeded role codes. See DB_TABLE_STRUCTURE.md.</summary>
