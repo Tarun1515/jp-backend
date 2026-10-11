@@ -339,6 +339,11 @@ GO
 :r $(DbRoot)\jp_app\01_tables\029_notification_masters.sql
 :r $(DbRoot)\jp_app\01_tables\030_t_app_notifications.sql
 
+-- Phase 6C-2-0 — G37. t_app_schools has carried VerifiedByUserId since 2F and
+-- t_app_teachers had only two of the three columns, because nothing ever set
+-- the teacher's badge at all.
+:r $(DbRoot)\jp_app\01_tables\031_alter_t_app_teachers_verifiedby.sql
+
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
 -- shapes the schema. It is listed here so a database rebuilt from scratch ends
@@ -421,6 +426,10 @@ GO
 -- database, so the atomic guarantee is free); email is dispatched afterwards.
 -- Depends on fn_VisibleBranches (003) for the school fan-out.
 :r $(DbRoot)\jp_app\04_procedures\021_notifications.sql
+
+-- Phase 6C-2-0 — G37. Depends on 021 (USP_CreateNotification) and on 029
+-- having types 13 and 14, which arrived in the same change as this.
+:r $(DbRoot)\jp_app\04_procedures\022_teacher_verification.sql
 
 -- PRE-5 (G26). The five masters that live in jp_app rather than jp_mdm, served
 -- through the same whitelist-driven shape as jp_mdm's USP_GetMaster. Without

@@ -107,30 +107,32 @@ USING (VALUES
     */
     (10, 'INVITE_RECEIVED',       N'A school invited you',    N'A school would like you to apply.',                    1, 1, 10),
     (11, 'INVITE_ACCEPTED',       N'Invitation accepted',     N'A teacher accepted your invitation.',                  2, 0, 11),
-    (12, 'INVITE_IGNORED',        N'Invitation declined',     N'A teacher passed on your invitation.',                 2, 0, 12)
+    (12, 'INVITE_IGNORED',        N'Invitation declined',     N'A teacher passed on your invitation.',                 2, 0, 12),
 
-    /* ---- verification (3x) — DELIBERATELY NOT SEEDED YET ---------------
-      🔴 VERIFICATION_APPROVED and VERIFICATION_REJECTED are missing on
-      purpose, and leaving them out cost more thought than putting them in.
+    /* ---- verification (3x, wired in 6C-2-0) ---------------------------
+      🔴 THESE TWO WAITED FOR THEIR CONSUMER, AND 6C-1 SAID SO.
 
-      Every type above has a live consumer: a procedure that creates it inside
-      its own event's transaction, proven by notifications.mjs. A verification
-      outcome cannot work that way — it is decided by the approval engine in
-      jp_mdm, and 2.2 forbids that transaction reaching into jp_app — so it
-      needs API-layer orchestration, with 2.48's caveat that the HTTP 200 would
-      mean the approval succeeded and not that the notification did.
+      In 6C-1 they were deliberately left unseeded: nothing created them, and a
+      type with no consumer is exactly the shape G32 was given a number for.
+      Looking for that consumer is what found G37 — nothing in the product set
+      t_app_teachers.IsVerified at all, four phases after the badge shipped.
 
-      ⚠️ And underneath it sits something worse, found while wiring this:
-      NOTHING IN THE PRODUCT SETS t_app_teachers.IsVerified.
-      ApprovalOrchestrationService.RunTeacherVerification returns a FAILED
-      outcome whose message says "setting IsVerified requires t_app_teachers,
-      which is Phase 3" — and Phase 3 shipped. The four verified teachers in
-      this database are seed rows. See the gap note in PROJECT_MEMORY.
+      G37 is closed now (USP_SetTeacherVerified), so they arrive, and the guard
+      at the bottom of this file names the procedure that writes each one.
 
-      🔴 So seeding these two would have been exactly the shape G32 was given a
-      number for: config present, consumer absent. Two rows that look like a
-      feature and are not. They arrive in the same commit as their consumer.
+      ⚠️ SendEmail = 1 for both. A verification outcome is the slowest-moving
+      thing a teacher waits on — days, not minutes — so it is the case where
+      somebody is least likely to be looking at the portal when it lands. The
+      DECLINE emails too, deliberately: a teacher who is never told is a teacher
+      who waits forever.
+
+      ⚠️ The Description is the notification's BODY, not internal prose. 022
+      reads it straight out of this table rather than composing text, which is
+      what makes an admin's private remarks structurally unable to reach the
+      teacher — there is no parameter for them.
     */
+    (13, 'VERIFICATION_APPROVED', N'You are verified',        N'Your profile has been verified. Schools can see the badge on your profile and in search results.', 1, 1, 13),
+    (14, 'VERIFICATION_REJECTED', N'Verification needs attention', N'Your verification could not be completed. Open your profile to check your documents and submit again.', 1, 1, 14)
 ) AS source (NotificationTypeId, Code, Name, Description, AudienceId, SendEmail, DisplayOrder)
 ON target.NotificationTypeId = source.NotificationTypeId
 WHEN MATCHED THEN
@@ -214,7 +216,9 @@ IF EXISTS (SELECT 1 FROM dbo.m_app_notification_type
                  'HIRED',                  -- USP_NotifyOffer  HIRED
                  'INVITE_RECEIVED',        -- USP_NotifyInvite RECEIVED
                  'INVITE_ACCEPTED',        -- USP_NotifyInvite ACCEPTED
-                 'INVITE_IGNORED'          -- USP_NotifyInvite IGNORED
+                 'INVITE_IGNORED',         -- USP_NotifyInvite IGNORED
+                 'VERIFICATION_APPROVED',  -- USP_SetTeacherVerified @Approved = 1
+                 'VERIFICATION_REJECTED'   -- USP_SetTeacherVerified @Approved = 0
              ))
     RAISERROR(N'6C VIOLATION: a notification type is seeded with no procedure that creates it (the G32 shape).', 16, 1);
 GO

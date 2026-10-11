@@ -285,6 +285,57 @@ internal sealed class ApprovalService : IApprovalService
             OrchestrationCompleted = !hasDownstreamWork,
         };
 
+        /*
+          🔴 A DECLINED VERIFICATION STILL HAS TO BE SAID — 6C-2-0 (G37).
+
+          Everything below this point is gated on the request having been
+          APPROVED, and that gate is load-bearing: an earlier version
+          orchestrated on IsCompleted alone, and rejecting a school registration
+          created and activated it anyway (the Phase 2E bug, argued above). So
+          the gate does not move.
+
+          ⚠️ But telling somebody their verification was declined is not
+          provisioning. It creates nothing, grants nothing, and is the ONLY
+          thing the teacher will ever see about the decision. Putting it behind
+          the approval gate would mean a teacher whose documents were rejected
+          waits forever, hearing nothing — which is the failure mode a
+          notification system exists to prevent.
+
+          🔒 The note the admin wrote is NOT passed. 022 composes the body from
+          the notification type's own Description, so there is no parameter
+          through which "document looks edited" could reach the person it is
+          about — the same rule the rejection's Remarks and the offer's
+          TeacherRemarks follow (021).
+        */
+        var declined = result.IsCompleted
+            && result.NewStatusId != StatusApproved
+            && detail.Header.RequestTypeId == RequestTypeTeacherVerification;
+
+        if (declined && detail.Header.EntityUid is { } declinedTeacherUid && declinedTeacherUid != Guid.Empty)
+        {
+            try
+            {
+                await _provisioning
+                    .SetTeacherVerifiedAsync(declinedTeacherUid, approved: false, actionByUserId,
+                        remarks: null, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                /*
+                  ⚠️ SWALLOWED, AND ONLY THIS ONE. The decision is committed in
+                  jp_mdm and cannot be rolled back (2.48); failing the request
+                  here would tell the admin their rejection did not happen when
+                  it did. The notification is the lesser of the two facts, so it
+                  is logged and the honest answer about the decision is still
+                  returned.
+                */
+                _logger.LogError(ex,
+                    "Approval {RequestNo}: the teacher was not notified that their verification was declined.",
+                    detail.Header.RequestNo);
+            }
+        }
+
         if (!hasDownstreamWork)
         {
             return response;

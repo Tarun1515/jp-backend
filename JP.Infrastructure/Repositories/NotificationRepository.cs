@@ -69,23 +69,6 @@ internal interface INotificationRepository
 
     Task<ProcResult> MarkEmailSentAsync(long notificationId, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Creates one notification directly.
-    /// </summary>
-    /// <remarks>
-    /// 🔴 THE ONLY CALLER IS VERIFICATION, AND IT IS THE ONLY EVENT THAT HAS TO
-    /// WORK THIS WAY. Every other notification is written inside its event's own
-    /// transaction by 021's notifiers, because the event and the notification
-    /// share a database. A verification outcome is decided by the approval
-    /// engine in <c>jp_mdm</c>, and 2.2 forbids that transaction reaching into
-    /// jp_app — so this one is orchestrated afterwards, in the API, and 2.48's
-    /// rule applies: the HTTP 200 means the approval succeeded, not that the
-    /// notification did.
-    /// </remarks>
-    Task<long?> CreateAsync(
-        Guid recipientUserUid, int notificationTypeId, string title, string? body,
-        string? actionUrl, byte? refEntityTypeId, Guid? refEntityUid,
-        CancellationToken cancellationToken);
 }
 
 internal sealed class NotificationRepository : BaseRepository, INotificationRepository
@@ -184,32 +167,4 @@ internal sealed class NotificationRepository : BaseRepository, INotificationRepo
         return QuerySingleAsync<ProcResult>("USP_MarkNotificationEmailSent", p, cancellationToken);
     }
 
-    public async Task<long?> CreateAsync(
-        Guid recipientUserUid, int notificationTypeId, string title, string? body,
-        string? actionUrl, byte? refEntityTypeId, Guid? refEntityUid,
-        CancellationToken cancellationToken)
-    {
-        var p = new DynamicParameters();
-        p.Add("@RecipientUserUid", recipientUserUid, DbType.Guid);
-        p.Add("@NotificationTypeId", notificationTypeId, DbType.Int32);
-        p.Add("@Title", title, DbType.String, size: 200);
-        p.Add("@Body", body, DbType.String, size: 1000);
-        p.Add("@ActionUrl", actionUrl, DbType.String, size: 300);
-        p.Add("@RefEntityTypeId", refEntityTypeId, DbType.Byte);
-        p.Add("@RefEntityUid", refEntityUid, DbType.Guid);
-
-        /*
-          🔴 AN OUTPUT PARAMETER, because 021's creators return no result set.
-          Its header has the reason and it is worth knowing: a procedure EXEC'd
-          from inside another emits its result sets to the client first, so a
-          creator that ended with the usual Status/Code/Message/Id SELECT would
-          have handed Dapper the NOTIFICATION's row instead of the event's — and
-          nothing would have errored, because 2.21 made the shapes identical.
-        */
-        p.Add("@NotificationId", dbType: DbType.Int64, direction: ParameterDirection.Output);
-
-        await ExecuteAsync("USP_CreateNotification", p, cancellationToken).ConfigureAwait(false);
-
-        return p.Get<long?>("@NotificationId");
-    }
 }

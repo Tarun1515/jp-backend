@@ -147,7 +147,8 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
                 await RunSchoolAsync(detail, actionByUserId, cancellationToken).ConfigureAwait(false),
 
             RequestTypeTeacherVerification =>
-                RunTeacherVerification(detail),
+                await RunTeacherVerificationAsync(detail, actionByUserId, cancellationToken)
+                    .ConfigureAwait(false),
 
             _ => OrchestrationOutcome.Fail(
                 $"No orchestration is defined for request type {detail.Header.RequestTypeId}."),
@@ -376,8 +377,7 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
     }
 
     /// <summary>
-    /// Teacher verification: structurally different, and deliberately does NOT
-    /// provision anything.
+    /// Teacher verification: the badge, its stamp, and the notification.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -387,34 +387,85 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
     /// <c>IsVerified = 1</c> on an existing <c>t_app_teachers</c> row.
     /// </para>
     /// <para>
-    /// That table does not exist yet, and neither does the signup-time creation
-    /// of teacher profiles. Both are Phase 3.
+    /// 🔴 THIS METHOD WAS A STUB UNTIL 6C-2-0, AND THAT WAS G37.
     /// </para>
     /// <para>
-    /// So this branch returns a FAILED outcome saying exactly that, rather than
-    /// returning success. Reporting success for work that did not happen is how
-    /// the orphan problem <c>USP_FindOrphanedApprovals</c> exists to catch gets
-    /// recreated one layer up — invisible, and this time with nothing to
-    /// reconcile against.
+    /// It returned a FAILED outcome whose message read "setting IsVerified
+    /// requires t_app_teachers, which is Phase 3". Phase 3 shipped four phases
+    /// later and this was never revisited: an admin could approve a teacher
+    /// through the real queue, the approval trail was written, and the badge
+    /// never appeared. Nothing errored, because the branch was already written
+    /// to report a failure — so the only symptom was a badge that stayed off.
     /// </para>
     /// <para>
-    /// It also must not fall through to the school path. A teacher approval has
-    /// no school payload and no organisation; provisioning one would be
-    /// nonsense that happened to compile.
+    /// ⚠️ 6C-2 is what made it urgent. Search results, applicant detail and the
+    /// invitation screens all show the badge, and with no way to earn one every
+    /// badge on every screen would have been seed data.
+    /// </para>
+    /// <para>
+    /// 🔒 The EntityUid is the teacher's <c>TeacherUid</c> — "the thing being
+    /// approved" (025's column comment). Resolving the teacher from the
+    /// REQUESTOR instead would verify the wrong person the first time an admin
+    /// submitted on somebody's behalf.
     /// </para>
     /// </remarks>
-    private OrchestrationOutcome RunTeacherVerification(ApprovalRequestDetailDto detail)
+    private async Task<OrchestrationOutcome> RunTeacherVerificationAsync(
+        ApprovalRequestDetailDto detail,
+        long actionByUserId,
+        CancellationToken cancellationToken)
     {
         var header = detail.Header;
 
-        _logger.LogWarning(
-            "Approval {RequestNo} (RequestId {RequestId}) is a teacher verification. The approval itself is " +
-            "recorded, but setting IsVerified requires t_app_teachers, which is Phase 3. " +
-            "No profile was created and none should be — a teacher account is already Active from signup (2.9).",
-            header.RequestNo, header.RequestId);
+        /*
+          ⚠️ A plain comparison, not a null pattern. EntityUid is non-nullable on
+          the detail header — it is NOT NULL on the table (025) — so the only
+          thing that can be wrong with it is Guid.Empty.
+        */
+        var teacherUid = header.EntityUid;
 
-        return OrchestrationOutcome.Fail(
-            "The verification decision was recorded. Marking the teacher profile as verified is not available yet " +
-            "(teacher profiles arrive in Phase 3), so no profile was updated.");
+        if (teacherUid == Guid.Empty)
+        {
+            /*
+              ⚠️ A real condition, not a defensive flourish: there is already one
+              such row in this database — a teacher verification request whose
+              EntityUid matches no teacher and no user. Reporting success for it
+              would recreate the orphan problem USP_FindOrphanedApprovals exists
+              to catch, one layer up and with nothing to reconcile against.
+            */
+            _logger.LogError(
+                "Approval {RequestNo} (RequestId {RequestId}) is a teacher verification with no EntityUid. " +
+                "No badge was set.",
+                header.RequestNo, header.RequestId);
+
+            return OrchestrationOutcome.Fail(
+                "The verification decision was recorded, but the request does not identify a teacher, " +
+                "so no profile was updated.");
+        }
+
+        var result = await _provisioning
+            .SetTeacherVerifiedAsync(teacherUid, approved: true, actionByUserId, remarks: null, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (result.Status != 1)
+        {
+            _logger.LogError(
+                "Approval {RequestNo}: USP_SetTeacherVerified refused teacher {TeacherUid} with {Code}.",
+                header.RequestNo, teacherUid, result.Code);
+
+            return OrchestrationOutcome.Fail(
+                $"The verification decision was recorded, but the teacher profile was not updated: {result.Message}");
+        }
+
+        /*
+          ⚠️ Changed = 0 is a SUCCESS. It means the teacher was already verified,
+          which is what a retried orchestration looks like (2.48) — and the
+          procedure deliberately stays silent rather than notifying twice about
+          one event.
+        */
+        _logger.LogInformation(
+            "Approval {RequestNo}: teacher {TeacherUid} verified (changed={Changed}).",
+            header.RequestNo, teacherUid, result.Changed);
+
+        return OrchestrationOutcome.Ok();
     }
 }

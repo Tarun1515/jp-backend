@@ -13,6 +13,18 @@ internal sealed class ProvisionResult : ProcResult
     public Guid? SchoolUid { get; set; }
 }
 
+/// <summary>What USP_SetTeacherVerified did. Phase 6C-2-0 (G37).</summary>
+/// <remarks>
+/// ⚠️ <see cref="Changed"/> separates "I verified them" from "they were already
+/// verified". The retry path needs that distinction — USP_RetryOrchestration
+/// exists so a failed cross-database handoff can be run again (2.48) — and a
+/// bare success hides it.
+/// </remarks>
+internal sealed class TeacherVerificationResult : ProcResult
+{
+    public int Changed { get; set; }
+}
+
 internal interface IProvisioningRepository
 {
     Task<ProvisionResult> ProvisionSchoolAsync(
@@ -26,6 +38,32 @@ internal interface IProvisioningRepository
 
     Task<IReadOnlyList<OrphanedApprovalRow>> FindOrphanedAsync(
         IReadOnlyList<(Guid RequestUid, string RequestNo, Guid? OrganizationUid, DateTime CompletedOn)> completed,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The teacher-verification half of the post-approval work: the badge, its
+    /// stamp, and the notification that tells the teacher. Phase 6C-2-0 (G37).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 This is what RunTeacherVerification used to refuse to do. Its stub
+    /// returned a FAILED outcome reading "setting IsVerified requires
+    /// t_app_teachers, which is Phase 3" — four phases after Phase 3 shipped —
+    /// so an admin could approve a teacher through the queue, the trail was
+    /// written, and the badge never appeared.
+    /// </para>
+    /// <para>
+    /// ⚠️ <paramref name="approved"/> is the DECISION, not the value to store. A
+    /// decline notifies and leaves the badge alone; revoking verification is a
+    /// real action with its own consequences and is not a side effect of
+    /// declining a form. 022's header argues it.
+    /// </para>
+    /// </remarks>
+    Task<TeacherVerificationResult> SetTeacherVerifiedAsync(
+        Guid teacherUid,
+        bool approved,
+        long actionByUserId,
+        string? remarks,
         CancellationToken cancellationToken);
 }
 
@@ -160,4 +198,30 @@ internal sealed class ProvisioningRepository : BaseRepository, IProvisioningRepo
 
         return QueryAsync<OrphanedApprovalRow>("USP_FindOrphanedApprovals", p, cancellationToken);
     }
+    /// <inheritdoc />
+    public Task<TeacherVerificationResult> SetTeacherVerifiedAsync(
+        Guid teacherUid,
+        bool approved,
+        long actionByUserId,
+        string? remarks,
+        CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@TeacherUid", teacherUid, DbType.Guid);
+        p.Add("@Approved", approved, DbType.Boolean);
+        p.Add("@ActionByUserId", actionByUserId, DbType.Int64);
+
+        /*
+          ⚠️ The remarks go to the procedure and the procedure does not put them
+          in the notification — 022 composes the body from the TYPE's own
+          Description, so there is no parameter through which an admin's private
+          note could reach the teacher. Passed anyway because the error log
+          wants them if this throws.
+        */
+        p.Add("@Remarks", remarks, DbType.String, size: 1000);
+
+        return QuerySingleAsync<TeacherVerificationResult>(
+            "USP_SetTeacherVerified", p, cancellationToken);
+    }
+
 }
