@@ -30,6 +30,14 @@ internal sealed class TeacherContactRow
     public string? Code { get; set; }
     public string Message { get; set; } = string.Empty;
     public long? Id { get; set; }
+
+    /*
+      ⚠️ 6B. The procedure projects this (010) and the DTO has declared it since
+      3E; the row type in between had no property for it, so Dapper had nowhere
+      to put the value and the service filled the gap with string.Empty.
+    */
+    public string? FullName { get; set; }
+
     public string? ResumePath { get; set; }
     public string? ContactEmail { get; set; }
     public string? ContactMobile { get; set; }

@@ -174,6 +174,22 @@ public static class AppConstants
           are ever changed apart, the approval engine will refuse somebody the
           UI offered a button to.
         */
+        /*
+          ---- Phase 6B, search and invites -------------------------------
+
+          🔴 TWO PERMISSIONS, AND THE SPLIT MATTERS BECAUSE ONE OF THEM COSTS.
+
+          TEACHER_SEARCH.VIEW looks; TEACHER_SEARCH.INVITE reaches out, and
+          reaching out is metered. A school can let somebody browse the teacher
+          base without letting them spend the month's invitations.
+
+          ⚠️ Both are seeded names from Phase 1A — the second is
+          TEACHER_SEARCH.INVITE rather than TEACHER_INVITE.SEND, which reads
+          oddly until you notice it groups with the search it follows.
+        */
+        public const string TeacherSearchView = "TEACHER_SEARCH.VIEW";
+        public const string TeacherInviteSend = "TEACHER_SEARCH.INVITE";
+
         public const string OfferCreate = "OFFER.CREATE";
         public const string OfferApprove = "OFFER.APPROVE";
 

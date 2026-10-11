@@ -1,10 +1,11 @@
 using System.Reflection;
+using JP.Domain.Invites;
 using JP.Domain.Teachers;
 
 namespace JP.App.Api.Startup;
 
 /// <summary>
-/// Refuses to start if the browse DTO has grown a contact field.
+/// Refuses to start if any school-facing teacher shape has grown a contact field.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -38,6 +39,21 @@ namespace JP.App.Api.Startup;
 /// response body as text and greps it. This one catches the type; that one
 /// catches a serialiser or mapper that adds a field the type never declared.
 /// </para>
+/// <para>
+/// 🔴 PHASE 6B WIDENED THE SET IT CHECKS, because 6B widened the exposure.
+/// Until then one type — the browse profile — was all a school could see of a
+/// teacher it had no consent from. Search changed that: a school can now page
+/// through the WHOLE teacher base, and an invitation list carries a teacher
+/// summary too. So <see cref="TeacherSearchResultDto"/> and
+/// <see cref="SchoolInviteDto"/> are checked alongside it.
+/// </para>
+/// <para>
+/// ⚠️ And the risk is strictly worse on those two. Every row on an applicant
+/// list has consented, so a contact column there would break the SHAPE rule
+/// without breaking 2.56. In a search result almost nobody has consented: one
+/// property would leak every teacher on the platform at once, to any school
+/// that typed a filter.
+/// </para>
 /// </remarks>
 internal static class ContactLeakGuard
 {
@@ -63,17 +79,35 @@ internal static class ContactLeakGuard
     ];
 
     /// <summary>
-    /// Throws if <see cref="TeacherBrowseDto"/> declares a forbidden property.
+    /// Every school-facing shape that describes a teacher without consent.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ ADDING A SHAPE HERE IS CHEAPER THAN REMEMBERING TO. A new
+    /// school-facing teacher projection that is not on this list is guarded by
+    /// nothing but the comments on it.
+    /// </remarks>
+    private static readonly Type[] Guarded =
+    [
+        typeof(TeacherBrowseDto),
+        typeof(TeacherSearchResultDto),
+        typeof(SchoolInviteDto),
+    ];
+
+    /// <summary>
+    /// Throws if any guarded shape declares a forbidden property.
     /// </summary>
     /// <exception cref="InvalidOperationException">
-    /// A contact-shaped property is present. The message names it.
+    /// A contact-shaped property is present. The message names the type and the
+    /// property.
     /// </exception>
     public static void Verify()
     {
-        var offenders = typeof(TeacherBrowseDto)
-            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Select(p => p.Name)
-            .Where(name => Forbidden.Any(f => name.Contains(f, StringComparison.OrdinalIgnoreCase)))
+        var offenders = Guarded
+            .SelectMany(type => type
+                .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Select(p => p.Name)
+                .Where(name => Forbidden.Any(f => name.Contains(f, StringComparison.OrdinalIgnoreCase)))
+                .Select(name => $"{type.Name}.{name}"))
             .ToList();
 
         if (offenders.Count == 0)
@@ -82,11 +116,11 @@ internal static class ContactLeakGuard
         }
 
         throw new InvalidOperationException(
-            $"TeacherBrowseDto declares {string.Join(", ", offenders)}, which a school browsing the teacher " +
-            "database must never receive. Contact details and the resume are gated behind " +
+            $"{string.Join(", ", offenders)} — a school seeing a teacher it has no consent from must never " +
+            "receive any of these. Contact details and the resume are gated behind " +
             "GET /api/teachers/{uid}/contact, which unlocks only when the teacher applied to that school or " +
-            "accepted its invite (PROJECT_MEMORY 2.56, LOCKED). " +
-            "If you need one of those values, use the contact endpoint — do not widen this type. " +
+            "accepted its invitation (PROJECT_MEMORY 2.56, LOCKED). " +
+            "If you need one of those values, use the contact endpoint — do not widen these types. " +
             "This check lives in JP.App.Api/Startup/ContactLeakGuard.cs.");
     }
 }

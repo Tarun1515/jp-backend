@@ -9,12 +9,12 @@
   ---------------------------------------------------------------------------
   🔴 WHY THERE IS A SECOND ONE OF THESE AT ALL (G26)
   ---------------------------------------------------------------------------
-  `USP_GetMaster` lives in jp_mdm and reads jp_mdm tables. Seven masters do not
+  `USP_GetMaster` lives in jp_mdm and reads jp_mdm tables. Eight masters do not
   live there:
 
       m_app_employment_types   m_app_job_status     m_app_application_status
-      m_app_offer_status       m_app_ledger_sources m_app_ref_entity_types
-      m_app_ledger_entry_types
+      m_app_offer_status       m_app_invite_status  m_app_ref_entity_types
+      m_app_ledger_entry_types m_app_ledger_sources
 
   They are in jp_app because `t_app_jobs`, `t_app_applications` and
   `t_app_feature_ledger` carry PHYSICAL foreign keys to them, and decision 2.2
@@ -177,6 +177,25 @@ BEGIN
     ELSE IF @MasterCode = 'OFFER_STATUS'
         SELECT OfferStatusId AS Id, Code, Name, DisplayOrder
         FROM dbo.m_app_offer_status
+        WHERE Is_Deleted = 0 AND Is_Active = 1 ORDER BY DisplayOrder, Name;
+
+    /*
+      🔴 ALL FIVE ROWS. Every invite state is reachable in 6B, so unlike
+      APPLICATION_STATUS there is nothing here waiting on a later phase.
+
+      ⚠️ ADDED IN THE SAME COMMIT THAT CREATED THE TABLE — which is the whole
+      of the 2.68 lesson. m_app_application_status shipped in 5A and was not
+      whitelisted until 5B needed it for a dropdown, and the only symptom in
+      between was a filter that would have had to be hardcoded. Nobody could
+      see the hole; it had to be remembered.
+
+      🔴 st.Name, never TeacherFacingName. This key feeds the SCHOOL's filter —
+      the school says "Ignored", the teacher is shown "You passed on this" —
+      and every teacher-facing row already carries its own wording from 020.
+    */
+    ELSE IF @MasterCode = 'INVITE_STATUS'
+        SELECT InviteStatusId AS Id, Code, Name, DisplayOrder
+        FROM dbo.m_app_invite_status
         WHERE Is_Deleted = 0 AND Is_Active = 1 ORDER BY DisplayOrder, Name;
 
     ELSE IF @MasterCode = 'LEDGER_ENTRY_TYPE'

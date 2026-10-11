@@ -219,6 +219,10 @@ public static class DependencyInjection
         services.AddScoped<IOfferRepository, OfferRepository>();
         services.AddScoped<IOfferService, OfferService>();
 
+        // Phase 6B — teacher search and invitations (🔒 consent path 2).
+        services.AddScoped<IInviteRepository, InviteRepository>();
+        services.AddScoped<IInviteService, InviteService>();
+
         // Public service interfaces — the boundary the API talks to.
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserService, UserService>();

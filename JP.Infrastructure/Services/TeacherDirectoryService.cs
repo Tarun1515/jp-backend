@@ -128,10 +128,22 @@ internal sealed class TeacherDirectoryService : ITeacherDirectoryService
             throw new ForbiddenException(row.Message);
         }
 
+        /*
+          🔴 FullName CAME FROM THE ROW, AND FOR THREE PHASES IT DID NOT.
+
+          This mapping read `string.Empty` — a literal, not a missing field — so
+          the endpoint served a blank name to every unlocked school since 3E and
+          no test noticed, because none asked for it. 6B added the column to the
+          procedure and the property to the row; this is the last of the three.
+
+          ⚠️ A hardcoded `string.Empty` in a mapping is worth distrusting on
+          sight. It is indistinguishable from a value that simply is not there
+          yet, which is exactly how this survived.
+        */
         return new TeacherContactDto
         {
             TeacherUid = teacherUid,
-            FullName = string.Empty,
+            FullName = row.FullName ?? string.Empty,
             ContactEmail = row.ContactEmail,
             ContactMobile = row.ContactMobile,
             ResumePath = row.ResumePath,

@@ -94,7 +94,8 @@ GO
   ---------------------------------------------------------------------------
   🔴 EXACTLY TWO PATHS, AND THEY ARE BOTH THE TEACHER'S OWN ACT (2.56, LOCKED)
   ---------------------------------------------------------------------------
-  When those tables land, the body becomes:
+  ✅ BOTH LANDED — t_app_applications in 5A, t_app_teacher_invites in 6B. The
+  body below is what was written here in advance, and it is what shipped:
 
       RETURN CASE WHEN EXISTS (
           -- 1. the teacher APPLIED to this school
@@ -164,44 +165,91 @@ RETURNS bit
 AS
 BEGIN
     /*
-      🔴 PHASE 5 MADE PATH 1 REAL. THIS USED TO BE A HARD `RETURN 0`.
+      🔒 BOTH PATHS ARE REAL AS OF PHASE 6B. THIS IS THE WHOLE RULE, IN ONE
+      PLACE, AND THERE WILL NEVER BE A THIRD.
 
-      Until t_app_applications existed there was no consent a teacher could
-      give, so the honest answer to "may this school see the contact details"
-      was always no. It is now exactly one question:
+      The history of this function is the history of decision 2.56:
 
-          has this teacher applied to this school?
+        3D   a hard `RETURN 0`. Neither table existed, so "no" was not a
+             placeholder — it was the correct answer.
+        5A   path 1: the teacher APPLIED to this school.
+        6B   path 2: the teacher ACCEPTED an invitation from this school.
 
-      ⚠️ ONE EXISTS, AND NOTHING ELSE. No join to jobs, no join to
-      subscriptions, no plan check, no invite check. Every extra clause here is
-      a new way for contact to leak, and this function is the only place in the
-      product that decides it.
+      2.56 is LOCKED at two paths. Both are the TEACHER's own act. Neither is a
+      payment.
 
-      ⚠️ SchoolId comes from t_app_applications' OWN denormalised column, not
-      through the job. The row is the consent; it must keep answering correctly
+      ---------------------------------------------------------------------
+      ⚠️ TWO EXISTS, AND NOTHING ELSE. STILL.
+      ---------------------------------------------------------------------
+      No join to jobs. No join to subscriptions. No plan check. No branch
+      check. No "has this school paid" anywhere, in any form. Every extra
+      clause here is another way for contact to leak, and this function is the
+      only place in the product that decides it — so the diff that adds a third
+      path is the diff to refuse.
+
+      🔴 AND THE SECOND PATH WENT *HERE*, not somewhere else. The tempting
+      shortcut was to let the invite screen answer its own contact question —
+      it already knows the invite was accepted. That would have been a second
+      copy of 2.56 living in a procedure nobody would think to check when the
+      rule changed. One function, both paths.
+
+      ---------------------------------------------------------------------
+      🔒 PATH 2: ACCEPTED ONLY. FOUR OTHER STATES ARE NOT CONSENT.
+      ---------------------------------------------------------------------
+        SENT      asking is not consent. A school that could see a number by
+                  ASKING for it would make this function decorative — and
+                  since TEACHER_INVITE is metered, it would also mean money
+                  bought the number, which 2.56 forbids in those words.
+        VIEWED    reading a message is not answering it.
+        APPLIED   contact IS unlocked — by the APPLICATION above, through path
+                  1. ⚠️ Deliberately NOT matched here: if this clause accepted
+                  APPLIED too, an invite row would start granting what an
+                  application row already grants, and deleting the application
+                  would no longer revoke it. One fact, one row.
+        IGNORED   an explicit no. Nothing, forever.
+
+      ⚠️ The id is named — `= 3` — rather than joined to
+      m_app_invite_status.IsConsent. A join would make this function's answer
+      depend on a master row somebody could edit; 027 carries a build-time
+      guard that exactly one row is IsConsent and that it is ACCEPTED, which is
+      the structural check (2.36) without putting the master in the hot path.
+
+      ---------------------------------------------------------------------
+      ⚠️ Is_Deleted = 0 ONLY, on both halves.
+      ---------------------------------------------------------------------
+      Is_Active is deliberately not tested. An application and an accepted
+      invitation are both historical FACTS, and deactivating one must not
+      silently re-lock details a school has already legitimately seen. Only a
+      soft DELETE takes consent back — and nothing in the product performs one
+      (G28), which is exactly why withdraw is a design question rather than a
+      button.
+
+      🔴 SchoolId comes from each table's OWN denormalised column, never
+      through a job. The row IS the consent; it must keep answering correctly
       after the job is closed, after the campus is soft-deleted, and whatever a
-      later phase does to jobs.
+      later phase does to either.
 
-      ⚠️ Is_Deleted = 0 only. Is_Active is deliberately NOT tested: an
-      application is a historical fact, and deactivating one must not silently
-      re-lock details a school has already legitimately seen. Only a soft
-      DELETE — which nothing in Phase 5 performs (G28) — takes the consent
-      back.
-
-      🔴 SAVED JOBS DO NOT COUNT. t_app_saved_jobs is private to the teacher,
-      tells the school nothing, and must never appear in this function. Saving
-      is interest; applying is consent.
-
-      Path 2 — the teacher ACCEPTED an invitation — is Phase 6, and the note
-      above this function explains why it cannot be bolted onto the existing
-      invite statuses without collapsing into path 1.
+      🔴 SAVED JOBS DO NOT COUNT, and never will. t_app_saved_jobs is private
+      to the teacher, tells the school nothing, and must never appear in this
+      function. Saving is interest; applying is consent.
     */
     RETURN CASE WHEN EXISTS (
+        -- 1. the teacher APPLIED to this school (5A)
         SELECT 1
         FROM dbo.t_app_applications a
         WHERE a.TeacherId  = @TeacherId
           AND a.SchoolId   = @ViewerSchoolId
           AND a.Is_Deleted = 0
+
+        UNION ALL
+
+        -- 2. the teacher ACCEPTED an invitation from this school (6B)
+        SELECT 1
+        FROM dbo.t_app_teacher_invites i
+        WHERE i.TeacherId      = @TeacherId
+          AND i.SchoolId       = @ViewerSchoolId
+          AND i.InviteStatusId = 3          -- 🔒 ACCEPTED, and only ACCEPTED
+          AND i.Is_Deleted     = 0
     ) THEN 1 ELSE 0 END;
 END
 GO
@@ -407,6 +455,28 @@ BEGIN
         @Code       AS Code,
         @Message    AS Message,
         @TeacherId  AS Id,
+
+        /*
+          ⚠️ FullName WAS MISSING FROM THIS PROJECTION UNTIL 6B, AND THE DTO
+          DECLARED IT.
+
+          TeacherContactDto has carried a FullName property since 3E and this
+          procedure never returned one, so the field was always an empty
+          string — present and permanently blank, which is the exact smell the
+          paragraph above warns about: a column present-but-empty is one
+          somebody populates later without thinking.
+
+          🔴 Found by READING a response body in the consent suite, not by any
+          assertion. Nothing checked it, because nothing had reason to suspect a
+          field that was always there.
+
+          ⚠️ No privacy question: the name is already public on the browse
+          profile — that procedure's header argues it explicitly ("a school
+          cannot decide whether to invite an anonymous row"). This was a
+          contract the SQL simply was not keeping.
+        */
+        CASE WHEN @Status = 1 THEN t.FullName   END AS FullName,
+
         CASE WHEN @Status = 1 THEN t.ResumePath END AS ResumePath,
         CASE WHEN @Status = 1 THEN u.Email      END AS ContactEmail,
         CASE WHEN @Status = 1 THEN u.Mobile     END AS ContactMobile

@@ -269,6 +269,41 @@ BEGIN
             (ApplicationId, FromStatusId, ToStatusId, ChangedByUserId, ChangedOn, CreatedBy)
         VALUES (@Id, NULL, 1, @ActorUserId, @Now, @ActorUserId);
 
+        /*
+          ---- 🔴 PHASE 6B: AN OPEN INVITE FROM THIS SCHOOL IS NOW ANSWERED ----
+
+          A school may invite a teacher and the teacher may apply INSTEAD of
+          answering. That is a real answer, and leaving the invite sitting at
+          Sent would show the school an outstanding invitation to somebody who
+          has already applied to them.
+
+          ⚠️ IN THIS TRANSACTION, deliberately. The application and the
+          invite's state are one act; split apart there is a window where the
+          teacher has applied and the school's outbox still says "waiting".
+
+          🔒 AND IT CHANGES NOTHING ABOUT CONSENT. APPLIED is not an IsConsent
+          row (027) and `fn_TeacherContactUnlocked` does not match it — the
+          unlock comes from the APPLICATION, through path 1. One fact, one row:
+          delete the application and the consent goes with it, which would not
+          be true if this status granted anything.
+
+          ⚠️ WHICH INVITES COUNT. An open invite naming THIS job, or one naming
+          no job at all ("we would like to talk to you"). An invite about a
+          DIFFERENT posting stays open, because applying to job A does not
+          answer an invitation about job B.
+        */
+        UPDATE dbo.t_app_teacher_invites
+           SET InviteStatusId = 4,                -- APPLIED
+               RespondedOn    = @Now,
+               RowVersion     = RowVersion + 1,
+               ModifiedOn     = @Now,
+               ModifiedBy     = @ActorUserId
+        WHERE TeacherId      = @TeacherId
+          AND SchoolId       = @SchoolId
+          AND InviteStatusId IN (1, 2)
+          AND Is_Deleted     = 0
+          AND (JobId IS NULL OR JobId = @JobId);
+
         SET @Status = 1;
         COMMIT TRANSACTION;
     END TRY

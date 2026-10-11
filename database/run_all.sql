@@ -328,6 +328,11 @@ GO
 :r $(DbRoot)\jp_app\01_tables\025_offer_masters.sql
 :r $(DbRoot)\jp_app\01_tables\026_t_app_offers.sql
 
+-- Phase 6B — teacher invites. 🔒 027 carries a build-time guard that exactly
+-- one invite status is IsConsent and that it is ACCEPTED (2.56, LOCKED).
+:r $(DbRoot)\jp_app\01_tables\027_invite_masters.sql
+:r $(DbRoot)\jp_app\01_tables\028_t_app_teacher_invites.sql
+
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
 -- shapes the schema. It is listed here so a database rebuilt from scratch ends
@@ -400,6 +405,11 @@ GO
 -- Phase 6A. Depends on fn_ApplicationTransitionAllowed (016), which owns the
 -- machine these procedures drive.
 :r $(DbRoot)\jp_app\04_procedures\018_offers.sql
+
+-- Phase 6B. 020 depends on USP_ConsumeFeatureCore (013) and on
+-- fn_EffectiveJobStatusId (014).
+:r $(DbRoot)\jp_app\04_procedures\019_teacher_search.sql
+:r $(DbRoot)\jp_app\04_procedures\020_invites.sql
 
 -- PRE-5 (G26). The five masters that live in jp_app rather than jp_mdm, served
 -- through the same whitelist-driven shape as jp_mdm's USP_GetMaster. Without

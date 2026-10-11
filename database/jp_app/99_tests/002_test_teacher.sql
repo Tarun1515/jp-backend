@@ -367,7 +367,22 @@ INSERT INTO @t VALUES ('public', N'…while still returning what a school needs 
 DECLARE @teacherAUid uniqueidentifier = (SELECT TeacherUid FROM dbo.t_app_teachers WHERE TeacherId = @teacherA);
 DECLARE @someSchool bigint = (SELECT TOP (1) SchoolId FROM dbo.t_app_schools WHERE Is_Deleted = 0);
 
+/*
+  ⚠️ FullName JOINED THIS SHAPE IN 6B, AND THIS TEST IS WHAT NOTICED.
+
+  USP_GetTeacherContactForSchool gained a FullName column in 6B — the DTO had
+  declared one since 3E and the procedure had never returned it. An INSERT …
+  EXEC into a table variable is positional and strict, so the omission showed
+  up here as Msg 213 the moment the projection changed.
+
+  🔴 That is the test earning its place: a shape change in a procedure cannot
+  pass through this file silently. The column order below mirrors the
+  projection, and the assertion under it checks FullName obeys the SAME lock as
+  the contact fields — it is CASE WHEN @Status = 1, so a locked read must have
+  it NULL too.
+*/
 DECLARE @contact TABLE (Status int, Code varchar(50), Message nvarchar(400), Id bigint,
+                        FullName nvarchar(150),
                         ResumePath nvarchar(500), ContactEmail nvarchar(150), ContactMobile varchar(15));
 
 INSERT INTO @contact EXEC dbo.USP_GetTeacherContactForSchool
@@ -384,6 +399,20 @@ SELECT 'public', N'🔴 …and the email, mobile and resume come back NULL, not 
             THEN N'all NULL' ELSE N'SOMETHING LEAKED' END,
        CASE WHEN ContactEmail IS NULL AND ContactMobile IS NULL AND ResumePath IS NULL
             THEN 'PASS' ELSE 'FAIL' END
+FROM @contact;
+
+/*
+  🔴 THE NEW COLUMN IS UNDER THE SAME LOCK (6B).
+
+  FullName is not a secret — the browse profile returns it to any school, and
+  that procedure's header argues why. But this procedure gates everything it
+  returns behind @Status, and a column that ignored the gate would be a column
+  somebody later reads as proof the gate opened.
+*/
+INSERT INTO @t
+SELECT 'public', N'🔴 …and FullName obeys the same lock, rather than arriving early',
+       CASE WHEN FullName IS NULL THEN N'NULL while locked' ELSE N'RETURNED: ' + FullName END,
+       CASE WHEN FullName IS NULL THEN 'PASS' ELSE 'FAIL' END
 FROM @contact;
 
 INSERT INTO @t VALUES ('public', N'…and fn_TeacherContactUnlocked is 0 for every school today',
