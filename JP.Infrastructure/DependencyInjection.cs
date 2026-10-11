@@ -169,6 +169,9 @@ public static class DependencyInjection
         // Compose from the profile, team and subscription reads that already
         // exist. The subscription is the one thing nothing else returned.
         services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
+
+        // Phase 6.5A. Billings jp_mdm half; activation lives on the subscription repo.
+        services.AddScoped<IBillingRepository, BillingRepository>();
         services.AddScoped<IDashboardService, DashboardService>();
 
         /*
@@ -244,6 +247,14 @@ public static class DependencyInjection
         */
         services.AddScoped<INotificationRepository, NotificationRepository>();
         services.AddScoped<INotificationService, NotificationService>();
+
+        /*
+          Phase 6.5A. THE SEAM (MONETIZATION_DESIGN 6.5-A): one service method
+          owns payment-verified -> subscription-activated. The admin endpoint
+          calls it today; a gateway callback will call the same method, with its
+          own authentication in the API layer and none of it reaching here.
+        */
+        services.AddScoped<IBillingService, BillingService>();
 
         // Public service interfaces — the boundary the API talks to.
         services.AddScoped<IAuthService, AuthService>();

@@ -99,13 +99,68 @@ BEGIN
 
         CASE WHEN pf.PlanFeatureId IS NULL THEN CAST(0 AS tinyint) ELSE CAST(1 AS tinyint) END AS HasMapping,
         ISNULL(pf.IsIncluded, CAST(0 AS tinyint))                                              AS IsIncluded,
-        pf.QuotaPerPeriod
+        pf.QuotaPerPeriod,
+
+        /*----------------------------------------------------------------
+          🔴 PHASE 6.5-C — THE FREE BASELINE, RESOLVED IN THE SAME QUERY.
+
+          A paid subscription past EndsOn falls back to the default plan's
+          entitlements (MONETIZATION_DESIGN 6.5-C) — so the consume needs that
+          plan's mapping too, not just this one's.
+
+          ⚠️ IT IS RESOLVED HERE, IN THIS QUERY, AND NOT IN A SECOND CALL.
+
+          The whole reason this procedure exists is that gating reads are
+          DIRECT, per consume, never cached (2.64) — an hour of master-cache
+          lag is disqualifying when the answer decides whether somebody can
+          post a job. Two more round trips on that path to find the fallback
+          would be paid by every consume, forever, to serve the minority of
+          accounts that have lapsed. One OUTER APPLY and one LEFT JOIN cost
+          nothing by comparison.
+
+          🔴 WHY THE CALLER CANNOT WORK THIS OUT ITSELF: the authority on
+          whether the subscription is in force is USP_ConsumeFeatureCore,
+          inside its per-owner lock. Anything the caller decided beforehand
+          would be a second read that can disagree with the first — which is
+          exactly the PLAN_CHANGED hazard 6.5-C records. So the caller hands
+          BOTH candidate mappings down and the procedure picks under the lock.
+        ----------------------------------------------------------------*/
+        fb.PlanId AS FallbackPlanId,
+
+        CASE WHEN fbpf.PlanFeatureId IS NULL THEN CAST(0 AS tinyint) ELSE CAST(1 AS tinyint) END
+             AS FallbackHasMapping,
+        ISNULL(fbpf.IsIncluded, CAST(0 AS tinyint)) AS FallbackIsIncluded,
+        fbpf.QuotaPerPeriod                         AS FallbackQuotaPerPeriod
     FROM dbo.m_mdm_features f
         LEFT JOIN dbo.m_mdm_plan_features pf
                ON pf.FeatureId  = f.FeatureId
               AND pf.PlanId     = @PlanId
               AND pf.Is_Active  = 1
               AND pf.Is_Deleted = 0
+
+        /*
+          The default plan for the SAME user type as @PlanId.
+          UQ_m_mdm_plans_OneDefaultPerUserType makes two defaults impossible;
+          TOP (1) is belt and braces, the same reasoning USP_GetDefaultPlan
+          records.
+        */
+        OUTER APPLY (
+            SELECT TOP (1) d.PlanId
+              FROM dbo.m_mdm_plans d
+             INNER JOIN dbo.m_mdm_plans cur
+                     ON cur.PlanId = @PlanId
+                    AND cur.UserTypeId = d.UserTypeId
+             WHERE d.IsDefault  = 1
+               AND d.Is_Active  = 1
+               AND d.Is_Deleted = 0
+             ORDER BY d.PlanId
+        ) fb
+
+        LEFT JOIN dbo.m_mdm_plan_features fbpf
+               ON fbpf.FeatureId  = f.FeatureId
+              AND fbpf.PlanId     = fb.PlanId
+              AND fbpf.Is_Active  = 1
+              AND fbpf.Is_Deleted = 0
     WHERE f.FeatureCode = @FeatureCode
       AND f.Is_Deleted  = 0;
 END

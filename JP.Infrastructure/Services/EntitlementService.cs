@@ -258,8 +258,24 @@ internal sealed class EntitlementService : IEntitlementService
             actorUserId,
 
             // 🔴 The guard. Compared under the procedure's lock against the plan
-            // actually on the subscription at that moment.
+            // actually IN FORCE at that moment — which, since 6.5-C, is not always
+            // the plan on the row. See EntitlementResolution.FallbackPlanId.
             subscription.PlanId,
+
+            /*
+              🔴 6.5-C — the free baseline, and ITS mapping.
+
+              Resolved in the SAME query as the plan's own mapping, so this
+              costs no extra round trip on a path that must stay a direct read
+              (2.64). Whether it gets used is the procedure's decision, under
+              its lock: a subscription past EndsOn drops to these numbers, and
+              one still in force ignores them entirely.
+            */
+            resolution.FallbackPlanId,
+            resolution.FallbackHasMapping,
+            resolution.FallbackIsIncluded,
+            resolution.FallbackQuotaPerPeriod,
+
             cancellationToken).ConfigureAwait(false);
 
         var decision = new EntitlementDecision

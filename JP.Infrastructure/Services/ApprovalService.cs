@@ -47,6 +47,11 @@ public interface IApprovalService
 internal sealed class ApprovalService : IApprovalService
 {
     private const int RequestTypeTeacherVerification = 2;
+
+    /// <summary>
+    /// Phase 6.5A. Seeded in jp_mdm/03_seed/011 — the id is contract (2.47).
+    /// </summary>
+    private const int RequestTypePlanChange = 5;
     private const int ActionApprove = 1;
     private const int ActionReject = 2;
 
@@ -220,6 +225,39 @@ internal sealed class ApprovalService : IApprovalService
             ?? throw new NotFoundException("That request was not found.");
 
         EnsureCanAct(detail.Header, caller);
+
+        /*
+          🔴 A PLAN CHANGE IS NOT APPROVED HERE — IT IS PAID FOR.
+
+          Phase 6.5A gave plan changes a request row, because that row is what
+          carries the RequestNo a school quotes to support (2.46) and the audit
+          trail. But its decisive act is PAYMENT VERIFICATION, which lives
+          behind its own permission and its own endpoint.
+
+          Without this guard an admin could approve one through the generic
+          route, and the result would be a request marked APPROVED while the
+          payment sits PENDING and NOTHING is activated — the orchestration
+          switch has no arm for type 5, so it reports failure and the request
+          is already closed. Nothing would be granted (so it is not an
+          entitlement hole), but "one open request per owner" keys on PENDING,
+          so the school could then raise a SECOND request for the same
+          intention and have two payments queued for one plan.
+
+          ⚠️ Found by asking what the generic endpoint does with the new type,
+          not by a failing test — every existing suite was green, because none
+          of them had a reason to action a request type that did not exist
+          when they were written.
+
+          🔴 Refused rather than silently redirected: an admin who clicks
+          Approve on a payment needs to know the money has not been confirmed.
+        */
+        if (detail.Header.RequestTypeId == RequestTypePlanChange)
+        {
+            throw new BusinessRuleException(
+                "A plan change is completed by verifying its payment, not by approving the request. "
+                + "Use the payments queue.",
+                ErrorCodes.BusinessRuleViolated);
+        }
 
         if (request.ActionTypeId == ActionReject && request.RejectionReasonId is null)
         {

@@ -789,9 +789,27 @@ CREATE TABLE #Perms (PermissionId int, PermissionCode varchar(50), PermissionNam
                      ModuleId int, ModuleCode varchar(30), ModuleName nvarchar(150),
                      ModuleDisplayOrder int, DisplayOrder int);
 INSERT INTO #Perms EXEC dbo.USP_GetPermissionList;
+/*
+  🔴 24 SINCE PHASE 6.5A — PAYMENT.VERIFY, in the BILLING module.
+
+  Changed in the SAME commit as the seed that added it
+  (03_seed/006_seed_billing_permission.sql), with the reason written down. A
+  count guard quietly relaxed to match new behaviour is worse than no guard.
+
+  ⚠️ It is an EQUALITY, not a floor, and it stays one. The failure worth
+  catching here is a permission appearing that nobody decided to add — and a
+  >= would never catch that.
+
+  🔒 Why 6.5A added a permission at all, when 2.5 deliberately reused
+  SETTINGS.MANAGE for plan configuration: verifying that money arrived is an
+  operational act with a money trail, not a system setting, and the two will be
+  granted to different people. 006's own guard asserts the closed set of
+  holders — SUPER_ADMIN and nobody else, because a school verifying its own
+  payment is the entire attack.
+*/
 INSERT INTO @Assert (Area, Name, Passed, Detail)
-SELECT 'lists', 'permission catalogue returns all 23',
-       CASE WHEN COUNT(*) = 23 THEN 1 ELSE 0 END, CONCAT('rows=', COUNT(*)) FROM #Perms;
+SELECT 'lists', 'permission catalogue returns all 24',
+       CASE WHEN COUNT(*) = 24 THEN 1 ELSE 0 END, CONCAT('rows=', COUNT(*)) FROM #Perms;
 
 IF OBJECT_ID('tempdb..#RolePerms') IS NOT NULL DROP TABLE #RolePerms;
 CREATE TABLE #RolePerms (PermissionId int, PermissionCode varchar(50), PermissionName nvarchar(150),
@@ -799,9 +817,16 @@ CREATE TABLE #RolePerms (PermissionId int, PermissionCode varchar(50), Permissio
 DECLARE @SuperAdminRoleId int = (SELECT RoleId FROM dbo.t_sso_roles
                                  WHERE RoleCode = 'SUPER_ADMIN' AND OrganizationUid IS NULL);
 INSERT INTO #RolePerms EXEC dbo.USP_GetRolePermissions @RoleId = @SuperAdminRoleId;
+/*
+  🔴 24 TOO, and for a reason beyond arithmetic: SUPER_ADMIN is seeded with
+  EVERY permission, so this assertion is what catches a new permission that was
+  added to the catalogue and then never granted to anybody — a screen that
+  exists and that nobody can open. 6.5A's PAYMENT.VERIFY is granted here and
+  NOWHERE else.
+*/
 INSERT INTO @Assert (Area, Name, Passed, Detail)
-SELECT 'lists', 'SUPER_ADMIN shows all 23 permissions granted',
-       CASE WHEN SUM(CAST(IsGranted AS int)) = 23 THEN 1 ELSE 0 END,
+SELECT 'lists', 'SUPER_ADMIN shows all 24 permissions granted',
+       CASE WHEN SUM(CAST(IsGranted AS int)) = 24 THEN 1 ELSE 0 END,
        CONCAT('granted=', SUM(CAST(IsGranted AS int))) FROM #RolePerms;
 
 EXEC dbo.USP_GetRoleList @OrganizationUid = @SchoolOrgUid;   -- smoke

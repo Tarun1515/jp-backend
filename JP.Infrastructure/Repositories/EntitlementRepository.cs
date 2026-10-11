@@ -51,6 +51,34 @@ internal sealed class EntitlementResolution
 
     /// <summary>Null = unlimited within the plan. Not the same as 0.</summary>
     public int? QuotaPerPeriod { get; set; }
+
+    /// <summary>
+    /// 🔴 Phase 6.5-C — the FREE baseline a lapsed paid subscription falls back
+    /// to, resolved in the SAME query as the plan's own mapping.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A paid subscription past <c>EndsOn</c> does not stop the account working;
+    /// it drops to the default plan's entitlements, derived at read time with no
+    /// job having run (MONETIZATION_DESIGN 6.5-C). The procedure decides that
+    /// under its per-owner lock — which is why BOTH mappings are carried down
+    /// rather than the caller picking one. Anything decided out here would be a
+    /// second read that can disagree with the first, which is exactly the
+    /// PLAN_CHANGED hazard.
+    /// </para>
+    /// <para>
+    /// ⚠️ The quota travels with the plan. An earlier draft passed only the
+    /// fallback's ID, which would have left a lapsed account on the free plan
+    /// holding the PAID plan's quota — silently, with nothing failing.
+    /// </para>
+    /// </remarks>
+    public int? FallbackPlanId { get; set; }
+
+    public bool FallbackHasMapping { get; set; }
+
+    public bool FallbackIsIncluded { get; set; }
+
+    public int? FallbackQuotaPerPeriod { get; set; }
 }
 
 /// <summary>
@@ -236,6 +264,17 @@ internal interface IEntitlementLedgerRepository
           the consume against a plan the owner has already left.
         */
         int expectedPlanId,
+
+        /*
+          🔴 6.5-C. The free baseline and ITS mapping, for the case where the
+          subscription has lapsed. The procedure picks between this and the
+          plan's own numbers inside its lock — see EntitlementResolution.
+        */
+        int? fallbackPlanId,
+        bool fallbackHasMapping,
+        bool fallbackIsIncluded,
+        int? fallbackQuotaPerPeriod,
+
         CancellationToken cancellationToken);
 
     Task<ProcResult> GrantCreditsAsync(
@@ -277,10 +316,18 @@ internal sealed class EntitlementLedgerRepository : BaseRepository, IEntitlement
         string? notes,
         long? actorUserId,
         int expectedPlanId,
+        int? fallbackPlanId,
+        bool fallbackHasMapping,
+        bool fallbackIsIncluded,
+        int? fallbackQuotaPerPeriod,
         CancellationToken cancellationToken)
     {
         var p = new DynamicParameters();
         p.Add("@ExpectedPlanId", expectedPlanId, DbType.Int32);
+        p.Add("@FallbackPlanId", fallbackPlanId, DbType.Int32);
+        p.Add("@FallbackHasMapping", fallbackHasMapping ? (byte)1 : (byte)0, DbType.Byte);
+        p.Add("@FallbackIsIncluded", fallbackIsIncluded ? (byte)1 : (byte)0, DbType.Byte);
+        p.Add("@FallbackQuotaPerPeriod", fallbackQuotaPerPeriod, DbType.Int32);
         p.Add("@OwnerUid", ownerUid, DbType.Guid);
         p.Add("@FeatureId", featureId, DbType.Int32);
         p.Add("@GatingModeId", (byte)gatingModeId, DbType.Byte);

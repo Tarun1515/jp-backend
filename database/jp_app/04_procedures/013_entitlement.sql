@@ -215,6 +215,45 @@ CREATE OR ALTER PROCEDURE dbo.USP_ConsumeFeatureCore
     @QuotaPerPeriod   int              = NULL,   -- NULL = unlimited within plan
 
     /*
+      🔴 PHASE 6.5 — THE FREE BASELINE A LAPSED PAID PLAN FALLS BACK TO.
+
+      MONETIZATION_DESIGN 6.5-C: expiry is DERIVED, never swept, and a paid
+      subscription past EndsOn does not stop the account working — it drops to
+      the default plan's entitlements. SUBSCRIPTION_INACTIVE is reserved for a
+      DECISION somebody made (cancelled, deactivated), never for time passing.
+
+      ⚠️ IT IS A PARAMETER BECAUSE PLANS LIVE IN jp_mdm (2.2). This procedure
+      cannot look up which plan is the default for this owner's user type; the
+      API resolves it — it already reads both databases and joins in memory —
+      and passes it down with the quota it resolved AGAINST that plan.
+
+      ⚠️ NULL = the pre-6.5 behaviour, where a lapsed subscription is refused.
+      That is deliberate backward compatibility for the SQL-level callers (the
+      engine suite drives this procedure directly), NOT a default to rely on.
+      Every API path supplies it, and the verification asserts that the API
+      path yields the free baseline rather than a refusal.
+    */
+    @FallbackPlanId   int              = NULL,
+
+    /*
+      🔴 THE FALLBACK PLAN'S OWN MAPPING, because falling back to the free plan
+      and keeping the PAID plan's quota would be the worst of both.
+
+      The first version of 6.5-C passed only @FallbackPlanId and left
+      @QuotaPerPeriod alone — so a lapsed account on a 100-post plan would have
+      dropped to the free plan and kept 100 posts. Found by asking what the
+      quota would be, not by a failing test: nothing would have failed, the
+      account would simply have been given a plan it was not on.
+
+      ⚠️ Passed in, like everything else about a plan, because plans live in
+      jp_mdm and no query may cross (2.2). The caller gets all of it in ONE
+      query — USP_ResolveEntitlement returns both mappings side by side.
+    */
+    @FallbackHasMapping     tinyint = NULL,
+    @FallbackIsIncluded     tinyint = NULL,
+    @FallbackQuotaPerPeriod int     = NULL,
+
+    /*
       🔴 THE PLAN THE CALLER RESOLVED AGAINST — the guard on a real race.
 
       The service must read the subscription to learn the PlanId BEFORE it can
@@ -264,6 +303,17 @@ BEGIN
             @SubIsActive    tinyint          = NULL,
             @SubEndsOn      datetime2        = NULL,
             @PlanIdOnSub    int              = NULL,
+
+            /*
+              🔴 THE PLAN ACTUALLY IN FORCE, which is not always the one on the
+              row. It selects which MAPPING applies (see the swap below).
+
+              ⚠️ It is deliberately NOT what @ExpectedPlanId is compared against
+              — see that branch for why comparing it there inverted the guard and
+              made every lapsed consume a 409.
+            */
+            @EffectivePlanId int             = NULL,
+            @InForce         bit             = NULL,
 
             -- The already-charged row, if this reference has one. See the
             -- idempotency block inside the transaction.
@@ -340,6 +390,64 @@ BEGIN
         ORDER BY s.Is_Active DESC, s.StartsOn DESC, s.SubscriptionId DESC;
 
         /*--------------------------------------------------------------------
+          🔴 PHASE 6.5-C — WHICH PLAN IS ACTUALLY IN FORCE.
+
+          Before 6.5 these conditions were written inline in the refusal chain
+          below and all of them produced SUBSCRIPTION_INACTIVE. That made a
+          cliff: an account that had paid once and lapsed was WORSE OFF than one
+          that never paid, because the never-paid account is on the free plan
+          and still works.
+
+            in force                   -> the plan on the row
+            lapsed (only time passed)  -> the FALLBACK plan, derived right here,
+                                          with no job having run and nothing
+                                          written
+            cancelled / deactivated    -> NULL, and the chain refuses
+
+          ⚠️ COMPUTED HERE RATHER THAN IN THE CHAIN. The first attempt rewrote
+          the SUBSCRIPTION_INACTIVE link into a bare ELSE with this logic inside
+          it, which does not compile — the next link is another ELSE IF (Msg
+          156). Hoisting it leaves the chain exactly as it shipped and makes
+          every link a single readable condition, which is better than the
+          version that failed to build.
+
+          ⚠️ The lapsed condition is deliberately narrow: StatusId 1 AND
+          Is_Active 1 means the ONLY reason fn_SubscriptionInForce said no is
+          EndsOn.
+        --------------------------------------------------------------------*/
+        SET @InForce = dbo.fn_SubscriptionInForce(
+                           @SubIsActive, @SubStatusId, @SubEndsOn, @Now);
+
+        SET @EffectivePlanId = CASE
+            WHEN @InForce = 1 THEN @PlanIdOnSub
+            WHEN @SubStatusId = 1 AND @SubIsActive = 1 AND @FallbackPlanId IS NOT NULL
+                 THEN @FallbackPlanId
+            ELSE NULL
+        END;
+
+        /*
+          🔴 AND THE MAPPING MOVES WITH THE PLAN.
+
+          If the fallback is what ended up in force, the quota in force is the
+          FALLBACK's quota. Keeping the paid plan's numbers here would hand a
+          lapsed account the allowance it stopped paying for — silently, with
+          nothing failing anywhere.
+
+          ⚠️ Guarded on @InForce = 0 as well as the id, because a FREE account
+          is already on the default plan: @EffectivePlanId = @FallbackPlanId is
+          true for it every single time, and swapping there would overwrite the
+          correct mapping with an identical one at best, and with NULLs at
+          worst if the caller passed none.
+        */
+        IF @InForce = 0 AND @EffectivePlanId IS NOT NULL
+                       AND @EffectivePlanId = @FallbackPlanId
+        BEGIN
+            SET @HasMapping     = ISNULL(@FallbackHasMapping, CAST(0 AS tinyint));
+            SET @IsIncluded     = ISNULL(@FallbackIsIncluded, CAST(0 AS tinyint));
+            SET @QuotaPerPeriod = @FallbackQuotaPerPeriod;
+        END
+
+        /*--------------------------------------------------------------------
           🔴 IDEMPOTENCY IS CHECKED **BEFORE** THE QUOTA DECISION.
 
           The first version of this procedure relied on the unique index alone:
@@ -408,9 +516,13 @@ BEGIN
             SELECT @Code = 'SUBSCRIPTION_MISSING',
                    @Message = N'This account has no subscription on file. Please contact support.';
         END
-        ELSE IF @SubIsActive = 0
-             OR @SubStatusId <> 1
-             OR (@SubEndsOn IS NOT NULL AND @SubEndsOn <= @Now)
+        /*
+          🔴 One condition now, reading as what it means: nothing is in force
+          and no baseline could be derived. SUBSCRIPTION_INACTIVE is a DECISION
+          somebody made — cancelled or deactivated — and is no longer the answer
+          to time passing (6.5-C). See the block above the chain.
+        */
+        ELSE IF @EffectivePlanId IS NULL
         BEGIN
             SELECT @Code = 'SUBSCRIPTION_INACTIVE',
                    @Message = N'This account''s subscription is not active.';
@@ -424,6 +536,38 @@ BEGIN
         */
         ELSE IF @ExpectedPlanId IS NOT NULL AND @PlanIdOnSub <> @ExpectedPlanId
         BEGIN
+            /*
+              🔴 COMPARED AGAINST THE ROW'S PLAN, NOT THE EFFECTIVE ONE — AND
+              6.5-C GOT THIS BACKWARDS FIRST, WHICH THE VERIFICATION CAUGHT.
+
+              What this guard is FOR: the caller read the subscription, looked up
+              that plan's mapping in jp_mdm, and passed both down. Between those
+              two reads the ROW could have changed — an activation, a
+              cancellation — leaving the caller's quota describing a plan the
+              owner has already left. @ExpectedPlanId detects exactly that, and
+              the thing that may have moved is the COLUMN.
+
+              ⚠️ The first version of 6.5-C compared @EffectivePlanId instead,
+              reasoning that the guard should track "the plan in force". That
+              inverted it: in the fallback case the row still says the paid plan
+              (which is what the caller passed) while the effective plan is the
+              free one, so EVERY consume on a lapsed subscription answered
+              PLAN_CHANGED — 409, forever, because 2.64's retry is bounded at one
+              and the second resolve reaches the same disagreement.
+
+              🔴 THE REASON THERE IS NO STALENESS TO DETECT IN THE FALLBACK CASE:
+              the caller does not pick a plan. USP_ResolveEntitlement returns the
+              plan's mapping AND the default plan's mapping side by side, and
+              both are passed in — so whichever this procedure decides is in
+              force, the caller already supplied the matching quota. The only
+              thing it cannot know is whether the ROW moved, which is what is
+              checked here.
+
+              ⚠️ Found by running the real path. A green suite would not have
+              shown it: the refusal is a plausible-looking 409 with a code that
+              reads like a race, on a subscription that genuinely had changed
+              plan earlier in the test.
+            */
             SELECT @Code = 'PLAN_CHANGED',
                    @Message = N'This account''s plan changed while the request was being processed.';
         END
@@ -688,6 +832,10 @@ CREATE OR ALTER PROCEDURE dbo.USP_ConsumeFeature
     @IsIncluded       tinyint          = 0,
     @QuotaPerPeriod   int              = NULL,
     @ExpectedPlanId   int              = NULL,
+    @FallbackPlanId   int              = NULL,   -- 6.5-C. See the core's note.
+    @FallbackHasMapping     tinyint = NULL,
+    @FallbackIsIncluded     tinyint = NULL,
+    @FallbackQuotaPerPeriod int     = NULL,
     @Units            int              = 1,
     @RefEntityTypeId  tinyint          = NULL,
     @RefEntityUid     uniqueidentifier = NULL,
@@ -709,6 +857,10 @@ BEGIN
         @IsIncluded      = @IsIncluded,
         @QuotaPerPeriod  = @QuotaPerPeriod,
         @ExpectedPlanId  = @ExpectedPlanId,
+        @FallbackPlanId  = @FallbackPlanId,
+        @FallbackHasMapping     = @FallbackHasMapping,
+        @FallbackIsIncluded     = @FallbackIsIncluded,
+        @FallbackQuotaPerPeriod = @FallbackQuotaPerPeriod,
         @Units           = @Units,
         @RefEntityTypeId = @RefEntityTypeId,
         @RefEntityUid    = @RefEntityUid,

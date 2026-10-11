@@ -137,6 +137,11 @@ GO
 :r $(DbRoot)\jp_sso\03_seed\002_seed_roles.sql
 :r $(DbRoot)\jp_sso\03_seed\003_seed_permissions.sql
 :r $(DbRoot)\jp_sso\03_seed\004_seed_role_permissions.sql
+
+-- Phase 6.5A. BILLING module + PAYMENT.VERIFY, SUPER_ADMIN only. It runs AFTER
+-- 004 because its own guard asserts the closed set of holders, and 004 is what
+-- would otherwise add one.
+:r $(DbRoot)\jp_sso\03_seed\006_seed_billing_permission.sql
 -- Menus AFTER permissions: the seed resolves PermissionCode -> PermissionId
 -- and aborts on an unknown code, because a typo there would silently make an
 -- item visible to everyone rather than to nobody.
@@ -219,6 +224,11 @@ GO
 -- monetization "is NOT here and should not be added here", and this is it.
 :r $(DbRoot)\jp_mdm\01_tables\036_entitlement_catalog.sql
 
+-- Phase 6.5A. Manual billing: the three columns 2A's gateway-shaped payment
+-- table needs, and the receipt + its counter.
+:r $(DbRoot)\jp_mdm\01_tables\037_alter_t_mdm_request_payments_manual.sql
+:r $(DbRoot)\jp_mdm\01_tables\038_t_mdm_payment_receipts.sql
+
 -- ---- indexes: access paths only. Business-key uniques live beside their table
 -- ---- in 01_tables, because a business key is part of what the table means
 -- ---- rather than a performance decision.
@@ -245,6 +255,11 @@ GO
 -- shipping the engine changes nothing anyone can see.
 :r $(DbRoot)\jp_mdm\03_seed\010_seed_features.sql
 
+-- Phase 6.5A. The PLAN_CHANGE request type, its prefix and its single level.
+-- 🔴 It also GUARDS that no paid plan has been seeded — 008_seed_plans.sql
+-- forbids that, and this is where the build would catch a leaked fixture.
+:r $(DbRoot)\jp_mdm\03_seed\011_seed_plan_change_request.sql
+
 -- ---- programmability: IST functions first, then USP_LogError which every
 -- ---- other procedure calls from its CATCH block, then the approval engine.
 PRINT '  Functions and procedures ...';
@@ -262,6 +277,9 @@ GO
 
 -- Phase 2.5 — the consume path's resolution query, and the admin matrix.
 :r $(DbRoot)\jp_mdm\04_procedures\009_entitlement_catalog.sql
+
+-- Phase 6.5A. Catalog, plan-change request, admin queue, verify + receipts.
+:r $(DbRoot)\jp_mdm\04_procedures\010_billing.sql
 
 
 /*==============================================================================
@@ -343,6 +361,10 @@ GO
 -- t_app_teachers had only two of the three columns, because nothing ever set
 -- the teacher's badge at all.
 :r $(DbRoot)\jp_app\01_tables\031_alter_t_app_teachers_verifiedby.sql
+
+-- Phase 6.5A. SourcePaymentUid — what makes activation idempotent across the
+-- two databases the seam spans (2.2 / 2.48).
+:r $(DbRoot)\jp_app\01_tables\032_alter_t_app_subscriptions_payment.sql
 
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
@@ -430,6 +452,10 @@ GO
 -- Phase 6C-2-0 — G37. Depends on 021 (USP_CreateNotification) and on 029
 -- having types 13 and 14, which arrived in the same change as this.
 :r $(DbRoot)\jp_app\04_procedures\022_teacher_verification.sql
+
+-- Phase 6.5A. fn_SubscriptionInForce (the ONE expiry predicate, 6.5-C),
+-- activation, and subscription history.
+:r $(DbRoot)\jp_app\04_procedures\023_billing_activation.sql
 
 -- PRE-5 (G26). The five masters that live in jp_app rather than jp_mdm, served
 -- through the same whitelist-driven shape as jp_mdm's USP_GetMaster. Without

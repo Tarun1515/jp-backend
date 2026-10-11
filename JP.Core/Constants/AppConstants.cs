@@ -201,6 +201,33 @@ public static class AppConstants
         /// opened at all.
         /// </summary>
         public const string SettingsManage = "SETTINGS.MANAGE";
+
+        /// <summary>
+        /// Phase 6.5. Confirming that money arrived, which activates a plan.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// 🔴 A NEW PERMISSION, WHERE 2.5 DELIBERATELY REUSED ONE. Phase 2.5
+        /// faced the same choice for "what a plan includes" and reused
+        /// <see cref="SettingsManage"/>, because that is a system setting. This
+        /// is not: it is an operational act with a money trail, and the two will
+        /// be granted to DIFFERENT people — somebody in finance who confirms
+        /// payments but may not re-price plans or flip a kill switch.
+        /// </para>
+        /// <para>
+        /// A permission is the only thing in this system that can express that
+        /// separation, and sharing one would make it impossible without a
+        /// migration — performed under pressure, after somebody has already been
+        /// given too much access.
+        /// </para>
+        /// <para>
+        /// 🔒 Seeded to SUPER_ADMIN and to NO school or teacher role
+        /// (jp_sso/03_seed/006). A school verifying its own payment is the entire
+        /// attack, and that seed file asserts the closed set of holders rather
+        /// than merely checking SUPER_ADMIN is among them.
+        /// </para>
+        /// </remarks>
+        public const string PaymentVerify = "PAYMENT.VERIFY";
     }
 
     /// <summary>Seeded role codes. See DB_TABLE_STRUCTURE.md.</summary>
