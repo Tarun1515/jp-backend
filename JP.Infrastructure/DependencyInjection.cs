@@ -172,6 +172,9 @@ public static class DependencyInjection
 
         // Phase 6.5A. Billings jp_mdm half; activation lives on the subscription repo.
         services.AddScoped<IBillingRepository, BillingRepository>();
+
+        // Phase 7A. The public surface's reads — no caller, no scoping by one.
+        services.AddScoped<IPublicRepository, PublicRepository>();
         services.AddScoped<IDashboardService, DashboardService>();
 
         /*
@@ -255,6 +258,23 @@ public static class DependencyInjection
           own authentication in the API layer and none of it reaching here.
         */
         services.AddScoped<IBillingService, BillingService>();
+
+        // Phase 7A. The public catalogue.
+        services.AddScoped<IPublicCatalogService, PublicCatalogService>();
+
+        /*
+          Phase 7A. The job-view counter is a SINGLETON and a BackgroundService
+          at once, registered so both resolve to the SAME instance — the
+          request path writes to the channel the background loop drains.
+
+          🔴 AddSingleton first, then AddHostedService resolving it. The obvious
+          AddHostedService<JobViewCounter>() would construct a SECOND instance:
+          requests would write to one channel and the loop would drain the
+          other, and view counts would silently never move.
+        */
+        services.AddSingleton<JobViewCounter>();
+        services.AddSingleton<IJobViewCounter>(sp => sp.GetRequiredService<JobViewCounter>());
+        services.AddHostedService(sp => sp.GetRequiredService<JobViewCounter>());
 
         // Public service interfaces — the boundary the API talks to.
         services.AddScoped<IAuthService, AuthService>();
