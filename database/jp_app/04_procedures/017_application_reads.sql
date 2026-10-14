@@ -703,13 +703,57 @@ GO
   and returns drafts and closed jobs; this one is scoped to "published and
   still open" and returns the school's public face alongside it. One procedure
   with an audience flag would eventually show a draft to a teacher.
+
+  ---------------------------------------------------------------------------
+  🔴 ADDRESSABLE BY UID AS WELL AS BY ID (7B-0), AND THE SAME RULE EITHER WAY
+  ---------------------------------------------------------------------------
+  The public website sends a teacher here through its Apply button, and the
+  public surface deliberately exposes only uids (2.47) — public-contract.mjs's
+  allowlist FAILS on a "jobId" key. So the funnel arrives holding a uid.
+
+  🔴 Resolved INSIDE this procedure rather than by a lookup endpoint beside it.
+  A "uid -> id" route would be a second place that decides which jobs a
+  teacher may name, and the day the two disagree the lenient one wins. Here the
+  uid becomes an id and then meets the SAME WHERE clause as before: published,
+  still open, school not suspended.
+
+  ⚠️ A uid that resolves to nothing leaves @JobId NULL, and all three result
+  sets come back empty — which is the answer a job that never existed gives,
+  and what the teacher's screen already handles.
 ==============================================================================*/
 CREATE OR ALTER PROCEDURE dbo.USP_GetJobForTeacher
-    @JobId    bigint,
+    @JobId    bigint = NULL,
+    @JobUid   uniqueidentifier = NULL,
     @UserUid  uniqueidentifier = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    /*
+      🔴 EXACTLY ONE OF THE TWO, AND THIS IS A PROGRAMMER ERROR RATHER THAN A
+      USER ONE — so it is loud rather than silently empty.
+
+      Both supplied is the dangerous shape: it reads as "find this id, or this
+      uid" and whichever won would be an accident. Neither supplied would
+      return empty from every set below, which looks exactly like a job that
+      does not exist — the worst way to learn that a caller forgot an argument.
+
+      ⚠️ The C# side cannot reach this: IPublicRepository exposes two named
+      methods rather than one with two nullable parameters, precisely so a call
+      site cannot put the wrong value in the wrong slot.
+    */
+    IF (@JobId IS NULL AND @JobUid IS NULL)
+        OR (@JobId IS NOT NULL AND @JobUid IS NOT NULL)
+    BEGIN
+        RAISERROR('USP_GetJobForTeacher: supply EXACTLY ONE of @JobId or @JobUid. Both or neither is a caller bug, and returning empty would look like a job that does not exist.', 16, 1);
+        RETURN;
+    END
+
+    IF @JobUid IS NOT NULL
+        SELECT @JobId = j.JobId
+          FROM dbo.t_app_jobs j
+         WHERE j.JobUid = @JobUid
+           AND j.Is_Deleted = 0;
 
     DECLARE @TeacherId bigint = NULL;
 

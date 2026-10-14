@@ -82,6 +82,42 @@ public sealed class TeacherJobsController : ControllerBase
     }
 
     /// <summary>
+    /// The same posting, addressed by uid. Phase 7B-0.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 WHY A SECOND WAY TO NAME ONE JOB. The public website's Apply button
+    /// sends a teacher here, and the public surface exposes only uids by design
+    /// (2.47) — public-contract.mjs's key allowlist FAILS on a <c>"jobId"</c>
+    /// key, so the funnel has no integer to send. Before this route existed the
+    /// Apply link could not name the job at all, which is what G41 recorded.
+    /// </para>
+    /// <para>
+    /// ⚠️ It coexists with <c>{jobId:long}</c> because the route constraints
+    /// make the two unambiguous: a guid never matches <c>:long</c> and a number
+    /// never matches <c>:guid</c>. Without the constraints one would shadow the
+    /// other and which one won would depend on registration order.
+    /// </para>
+    /// <para>
+    /// 🔴 The same procedure, so the same rule: a draft, expired, closed or
+    /// deleted job answers 404 here exactly as it does on the id route. The uid
+    /// is resolved INSIDE the procedure and then meets the identical WHERE
+    /// clause — there is no second definition of "a job a teacher may open" to
+    /// fall out of step.
+    /// </para>
+    /// </remarks>
+    [HttpGet("{jobUid:guid}")]
+    [ProducesResponseType(typeof(Response<JobForTeacherDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetByUid(Guid jobUid, CancellationToken cancellationToken)
+    {
+        var job = await _teacher.GetJobByUidAsync(User, jobUid, cancellationToken).ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(job));
+    }
+
+    /// <summary>
     /// Save or unsave a job — the teacher's private shortlist.
     /// </summary>
     /// <remarks>

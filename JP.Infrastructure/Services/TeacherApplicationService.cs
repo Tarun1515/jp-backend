@@ -17,6 +17,9 @@ public interface ITeacherApplicationService
 
     Task<JobForTeacherDto> GetJobAsync(ClaimsPrincipal caller, long jobId, CancellationToken cancellationToken);
 
+    /// <summary>One posting, by uid — the shape the public site's funnel holds.</summary>
+    Task<JobForTeacherDto> GetJobByUidAsync(ClaimsPrincipal caller, Guid jobUid, CancellationToken cancellationToken);
+
     Task<ApplyResultDto> ApplyAsync(
         ClaimsPrincipal caller, ApplyToJobRequest request, CancellationToken cancellationToken);
 
@@ -120,6 +123,34 @@ internal sealed class TeacherApplicationService : ITeacherApplicationService
         Require(caller, AppConstants.PermissionCodes.JobView);
 
         return await _applications.GetJobForTeacherAsync(jobId, caller.GetUserUid(), cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new NotFoundException("That job was not found, or it is no longer open.");
+    }
+
+    /// <summary>
+    /// One posting, by uid. Phase 7B-0.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 THE SAME RULE AND THE SAME MESSAGE as the id route above, because it
+    /// is the same procedure — the uid becomes an id inside it and then meets
+    /// the identical WHERE clause. Proven rather than argued: a DRAFT job's uid
+    /// returns empty here, measured against the deployed procedure.
+    /// </para>
+    /// <para>
+    /// ⚠️ This exists because the public website's Apply button hands a teacher
+    /// a uid. The public surface exposes no integer job id by design (2.47),
+    /// and public-contract.mjs's key allowlist FAILS on a <c>"jobId"</c> key —
+    /// so the funnel could not have named a job any other way.
+    /// </para>
+    /// </remarks>
+    public async Task<JobForTeacherDto> GetJobByUidAsync(
+        ClaimsPrincipal caller, Guid jobUid, CancellationToken cancellationToken)
+    {
+        EnsureTeacher(caller);
+        Require(caller, AppConstants.PermissionCodes.JobView);
+
+        return await _applications.GetJobForTeacherByUidAsync(jobUid, caller.GetUserUid(), cancellationToken)
             .ConfigureAwait(false)
             ?? throw new NotFoundException("That job was not found, or it is no longer open.");
     }

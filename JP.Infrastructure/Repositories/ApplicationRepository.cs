@@ -86,6 +86,21 @@ internal interface IApplicationRepository
     Task<JobForTeacherDto?> GetJobForTeacherAsync(
         long jobId, Guid? userUid, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The same job, addressed by uid. Phase 7B-0.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 A SECOND NAMED METHOD RATHER THAN ONE WITH TWO NULLABLE IDS. The
+    /// procedure takes exactly one of @JobId or @JobUid and raises if given
+    /// both or neither — but a C# signature of
+    /// <c>(long? jobId, Guid? jobUid, Guid? userUid)</c> puts two nullable
+    /// Guids next to each other, and a call site that transposes them compiles
+    /// cleanly and looks up the job whose uid is the caller's own user uid.
+    /// Two names make that unexpressible.
+    /// </remarks>
+    Task<JobForTeacherDto?> GetJobForTeacherByUidAsync(
+        Guid jobUid, Guid? userUid, CancellationToken cancellationToken);
+
     Task<ProcResult> ApplyAsync(
         long teacherId, long jobId, string? coverNote, long actorUserId,
         CancellationToken cancellationToken);
@@ -277,6 +292,31 @@ internal sealed class ApplicationRepository : BaseRepository, IApplicationReposi
         p.Add("@JobId", jobId, DbType.Int64);
         p.Add("@UserUid", userUid, DbType.Guid);
 
+        return ReadJobForTeacherAsync(p, cancellationToken);
+    }
+
+    public Task<JobForTeacherDto?> GetJobForTeacherByUidAsync(
+        Guid jobUid, Guid? userUid, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@JobUid", jobUid, DbType.Guid);
+        p.Add("@UserUid", userUid, DbType.Guid);
+
+        return ReadJobForTeacherAsync(p, cancellationToken);
+    }
+
+    /// <summary>
+    /// The three result sets, read once for both entry points.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Shared so that the two methods above cannot drift in how they read
+    /// the grid. The procedure always emits all three sets, including when the
+    /// job was not found — which is why the subject and level reads happen
+    /// before the null check rather than after.
+    /// </remarks>
+    private Task<JobForTeacherDto?> ReadJobForTeacherAsync(
+        DynamicParameters p, CancellationToken cancellationToken)
+    {
         return QueryMultipleAsync<JobForTeacherDto?>("USP_GetJobForTeacher", async grid =>
         {
             var job = await grid.ReadFirstOrDefaultAsync<JobForTeacherDto>().ConfigureAwait(false);
