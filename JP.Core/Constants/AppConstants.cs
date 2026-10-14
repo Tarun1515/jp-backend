@@ -259,6 +259,60 @@ public static class AppConstants
         /// </para>
         /// </remarks>
         public const string BillingManage = "BILLING.MANAGE";
+
+        /*
+          ---- Phase 7B, the admin operations desk ------------------------
+
+          🔴 THREE OF THESE FOUR WERE SEEDED IN PHASE 1 AND GATED NOTHING FOR
+          SEVEN PHASES. jp_sso's 003 created MODERATION.JOB, MODERATION.REPORT
+          and CMS.MANAGE and 004 granted them; 7B is the first code that asks.
+          jp_sso 008 adds the closed-set guards that keep those grants right,
+          because asserting PRESENCE passes while an extra holder exists.
+
+          🔒 AS SEEDED, AND THE SEED IS THE AUTHORITY:
+
+              MODERATION.JOB      SUPER_ADMIN, MODERATION_ADMIN
+              MODERATION.REPORT   SUPER_ADMIN, MODERATION_ADMIN
+              ENQUIRY.MANAGE      SUPER_ADMIN, MODERATION_ADMIN
+              CMS.MANAGE          SUPER_ADMIN
+
+          🔴 VERIFICATION_ADMIN HOLDS NONE OF THEM. Verification answers "is
+          this school real?" — once, before the first job goes live. Moderation
+          answers "is this content acceptable?" about what a verified school
+          then posts. One person holding both approves a school and then
+          polices its adverts. 008 names that grant explicitly so the build
+          failure says why rather than just that a set changed.
+
+          ⚠️ CMS.MANAGE ALSO GATES FEATURED PLACEMENT. Module 9 is called
+          Content and the permission means "may manage website content";
+          featuring a job or a school is a decision about what the public site
+          shows, like the FAQ copy and the content blocks, and held by the same
+          role. A FEATURED.MANAGE given to exactly the same role gating exactly
+          the same kind of act would be a distinction with nothing on either
+          side of it.
+        */
+        public const string ModerationJob = "MODERATION.JOB";
+        public const string ModerationReport = "MODERATION.REPORT";
+
+        /// <summary>
+        /// 🔴 NEW IN 7B, rather than reusing <see cref="ModerationReport"/>.
+        /// </summary>
+        /// <remarks>
+        /// A contact enquiry and an abuse report both arrive unbidden and both
+        /// sit in a queue an admin dispositions with remarks, so reuse was
+        /// tempting. It was rejected because ACTING on them differs: answering
+        /// "how do we list our school?" is correspondence, and acting on a
+        /// report can mean pulling a school's advert off the public site. One
+        /// permission for both means whoever answers the email can also pull
+        /// content, and separating them later is a migration under pressure.
+        ///
+        /// ⚠️ Both go to the same two roles today — exactly the situation 007
+        /// described for BILLING.MANAGE. The distinction costs nothing now and
+        /// is the only thing that can express the separation later.
+        /// </remarks>
+        public const string EnquiryManage = "ENQUIRY.MANAGE";
+
+        public const string CmsManage = "CMS.MANAGE";
     }
 
     /// <summary>Seeded role codes. See DB_TABLE_STRUCTURE.md.</summary>

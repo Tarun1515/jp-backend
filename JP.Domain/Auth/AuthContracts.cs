@@ -23,6 +23,25 @@ public sealed class RegisterSchoolRequest
 /// <summary>POST /api/auth/register/teacher</summary>
 public sealed class RegisterTeacherRequest
 {
+    /// <summary>
+    /// The teacher's name, as they typed it on the signup form. Phase 7B.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THIS FIELD WAS ASKED FOR AND THROWN AWAY FOR SIX PHASES (G43).
+    ///
+    /// The signup form has REQUIRED a name since Phase 1 and this contract had
+    /// no field for it, so every teacher typed their name and it never left
+    /// the browser. `002_provisioning_accounts.sql` has had an `@FullName`
+    /// parameter the whole time, and AuthService passed it a literal
+    /// <c>null</c> — the plumbing was complete and the value was missing.
+    ///
+    /// ⚠️ 150 characters, matching `t_app_teachers.FullName`. A longer value
+    /// would be refused by the column after the SSO account had already been
+    /// committed, which is the one place in this flow where a failure cannot be
+    /// retried cleanly.
+    /// </remarks>
+    public string Name { get; set; } = string.Empty;
+
     public string Email { get; set; } = string.Empty;
     public string? Mobile { get; set; }
     public string Password { get; set; } = string.Empty;

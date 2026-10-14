@@ -219,11 +219,53 @@ BEGIN
            OR s.SchoolName LIKE N'%' + @Search + N'%')
 
     /*
-      Newest first. Featured ordering arrives in 7B and goes in FRONT of this
-      ORDER BY, derived from the featured row's date window — not by a column
-      on the job and not by a sweep.
+      🔴 FEATURED FIRST, THEN NEWEST. Phase 7B.
+
+      7A left this note in place of the clause: "Featured ordering arrives in 7B
+      and goes in FRONT of this ORDER BY, derived from the featured row's date
+      window — not by a column on the job and not by a sweep." This is that.
+
+      🔴 DERIVED, AND THE IST DATE IS WHY fn_IstToday IS HERE.
+
+      A featured row says "from this date to that date". Whether it applies
+      TODAY is a comparison, made here, every time the listing is read. There
+      is no IsFeatured column to keep in step — 034 fails the build if either
+      featured table grows one, and 026 fails it if a procedure mentions one.
+
+      ⚠️ fn_IstToday(), never CAST(SYSUTCDATETIME() AS date). Between 00:00 and
+      05:30 IST the UTC date is still yesterday, so a UTC comparison would end
+      a paid placement five and a half hours early and start one five and a
+      half hours late — every night, for everybody. 2.28: storage UTC, rules
+      IST. 026 carries a structural guard that every featured read depends on
+      this function.
+
+      ⚠️ EXISTS, not a JOIN. A join to the featured table would multiply a job
+      by its historical windows — a job featured in January and again in March
+      would appear twice in the listing, which is the kind of bug that looks
+      like a paging fault.
+
+      ⚠️ DisplayOrder is read with a correlated subquery rather than carried by
+      the EXISTS, and it is NULL for an unfeatured job — which sorts last among
+      the featured group and never affects the rest, because the group key
+      above it has already separated them.
     */
-    ORDER BY j.PublishedOn DESC, j.JobId DESC
+    ORDER BY
+        CASE WHEN EXISTS (SELECT 1
+                            FROM dbo.t_app_featured_jobs f
+                           WHERE f.JobId = j.JobId
+                             AND f.Is_Deleted = 0
+                             AND f.FromDate <= dbo.fn_IstToday()
+                             AND f.ToDate   >= dbo.fn_IstToday())
+             THEN 0 ELSE 1 END,
+
+        (SELECT MIN(f.DisplayOrder)
+           FROM dbo.t_app_featured_jobs f
+          WHERE f.JobId = j.JobId
+            AND f.Is_Deleted = 0
+            AND f.FromDate <= dbo.fn_IstToday()
+            AND f.ToDate   >= dbo.fn_IstToday()),
+
+        j.PublishedOn DESC, j.JobId DESC
     OFFSET (@PageNumber - 1) * @PageSize ROWS
     FETCH NEXT @PageSize ROWS ONLY;
 END

@@ -104,8 +104,13 @@ internal sealed class AuthService : IAuthService
           reporting "registration failed" for an account that exists sends the
           person into a retry that hits a duplicate-email error. See the service.
         */
+        /*
+          ⚠️ fullName WAS A LITERAL null HERE UNTIL PHASE 7B (G43), while the
+          signup form required one. The provisioning procedure has accepted
+          @FullName since Phase 3B; nothing was missing except this argument.
+        */
         await _teacherProvisioning
-            .ProvisionAsync(result.UserUid ?? Guid.Empty, fullName: null, cancellationToken)
+            .ProvisionAsync(result.UserUid ?? Guid.Empty, request.Name.Trim(), cancellationToken)
             .ConfigureAwait(false);
 
         return new RegistrationResponse

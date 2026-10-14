@@ -121,6 +121,20 @@ VALUES
 ('ADMIN_MODERATE_JOBS',     'ADMIN_MODERATION', N'Jobs',       1, N'/moderation/jobs',       'briefcase',     'MODERATION.JOB',      10, 1, 1),
 ('ADMIN_MODERATE_REPORTS',  'ADMIN_MODERATION', N'Reports',    1, N'/moderation/reports',    'flag',          'MODERATION.REPORT',   20, 1, 1),
 
+/*
+  Phase 7B — the contact queue.
+
+  ⚠️ TOP LEVEL, NOT UNDER MODERATION, because it is not moderation: answering
+  a visitor who asked a question is a support job, and ENQUIRY.MANAGE is a
+  different permission from MODERATION.REPORT for the same reason — reading
+  complaints should not carry the right to read every visitor's email address.
+
+  🔴 If support and moderation turn out to be the same two people, the fix is
+  granting ENQUIRY.MANAGE to MODERATION_ADMIN in 008's seed. That is one line.
+  Splitting a permission after the fact is not.
+*/
+('ADMIN_ENQUIRIES',         NULL, N'Enquiries',             1, N'/enquiries',             'mail',             'ENQUIRY.MANAGE',      35, 1, 1),
+
 ('ADMIN_USERS',             NULL, N'Users',                 1, N'/users',                 'users',            'USER.MANAGE',         40, 1, 1),
 ('ADMIN_MASTERS',           NULL, N'Master data',           1, N'/masters',               'database',         'SETTINGS.MANAGE',     50, 1, 1),
 
@@ -134,7 +148,22 @@ VALUES
 */
 ('ADMIN_PLANS',             NULL, N'Plans and features',    1, N'/settings/plans',        'sliders-horizontal', 'SETTINGS.MANAGE',   55, 1, 1),
 ('ADMIN_PAYMENTS',          NULL, N'Payments',              1, N'/billing/payments',    'credit-card',      'PAYMENT.VERIFY',      57, 1, 1),
-('ADMIN_CMS',               NULL, N'CMS',                   1, N'/cms',                   'newspaper',        'CMS.MANAGE',          60, 1, 1),
+/*
+  Phase 7B — CMS STOPS BEING A LEAF AND BECOMES A GROUP.
+
+  🔴 Its RoutePath goes to NULL and three children carry the links. The MERGE
+  below updates the existing row rather than inserting a second one, which is
+  why the route '/cms' still exists in app.routes.ts as a redirect: this row no
+  longer points at it, but bookmarks and handover documents do.
+
+  ⚠️ The children share CMS.MANAGE with the parent that used to hold it, so
+  nobody's access changed — what changed is that the three jobs behind one link
+  are now three links.
+*/
+('ADMIN_CMS',               NULL, N'CMS',                   1, NULL,                      'newspaper',        NULL,                  60, 1, 1),
+('ADMIN_CMS_FEATURED',      'ADMIN_CMS', N'Featured',        1, N'/cms/featured',          'star',          'CMS.MANAGE',          10, 1, 1),
+('ADMIN_CMS_FAQS',          'ADMIN_CMS', N'FAQs',            1, N'/cms/faqs',              'help-circle',   'CMS.MANAGE',          20, 1, 1),
+('ADMIN_CMS_BLOCKS',        'ADMIN_CMS', N'Page content',    1, N'/cms/blocks',            'file-text',     'CMS.MANAGE',          30, 1, 1),
 ('ADMIN_REPORTS',           NULL, N'Analytics',             1, N'/reports',               'bar-chart-3',      'REPORT.VIEW',         70, 1, 1),
 ('ADMIN_SETTINGS',          NULL, N'Settings',              1, N'/settings',              'settings',         'SETTINGS.MANAGE',     80, 1, 1),
 

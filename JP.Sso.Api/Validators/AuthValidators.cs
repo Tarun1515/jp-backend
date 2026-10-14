@@ -70,6 +70,21 @@ public sealed class RegisterTeacherRequestValidator : AbstractValidator<Register
 {
     public RegisterTeacherRequestValidator()
     {
+        /*
+          ⚠️ REQUIRED HERE BECAUSE IT IS REQUIRED ON THE FORM (G43). The form
+          has demanded a name since Phase 1; the server accepted requests
+          without one because the contract had no field. Now that it does, the
+          two agree.
+
+          ⚠️ 150 matches t_app_teachers.FullName. A validator looser than the
+          column turns a clean 400 into a failure AFTER the SSO account is
+          committed — and that is the one step in this flow a person cannot
+          retry cleanly, because the second attempt hits a duplicate email.
+        */
+        RuleFor(x => x.Name)
+            .NotEmpty().WithMessage("Enter your name.")
+            .MaximumLength(150).WithMessage("That name is too long.");
+
         RuleFor(x => x.Email).ValidEmail();
         RuleFor(x => x.Password).ValidPassword();
 

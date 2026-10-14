@@ -175,6 +175,9 @@ public static class DependencyInjection
 
         // Phase 7A. The public surface's reads — no caller, no scoping by one.
         services.AddScoped<IPublicRepository, PublicRepository>();
+
+        // Phase 7B. The admin operations desk.
+        services.AddScoped<IAdminDeskRepository, AdminDeskRepository>();
         services.AddScoped<IDashboardService, DashboardService>();
 
         /*
@@ -261,6 +264,9 @@ public static class DependencyInjection
 
         // Phase 7A. The public catalogue.
         services.AddScoped<IPublicCatalogService, PublicCatalogService>();
+
+        // Phase 7B. Moderation, reports, featured, the site copy, enquiries.
+        services.AddScoped<IAdminDeskService, AdminDeskService>();
 
         /*
           Phase 7A. The job-view counter is a SINGLETON and a BackgroundService
