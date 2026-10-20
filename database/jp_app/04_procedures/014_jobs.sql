@@ -488,6 +488,37 @@ CREATE OR ALTER PROCEDURE dbo.USP_PublishJob
     @IsIncluded       tinyint = 0,
     @QuotaPerPeriod   int     = NULL,
     @ExpectedPlanId   int     = NULL,
+
+    /*
+      🔴 THE FALLBACK, THREADED THROUGH — G38, CLOSED IN PHASE 8-0.
+    
+      This procedure called USP_ConsumeFeatureCore without these four
+      parameters until 8-0, so the core saw @FallbackPlanId = NULL and
+      took its pre-6.5 branch: a subscription past EndsOn resolved to no
+      effective plan at all and the chain answered SUBSCRIPTION_INACTIVE.
+    
+      MEASURED, not reasoned about. The same lapsed owner, the same FREE
+      feature, the same call:
+    
+          NO FALLBACK   -> Status 0  SUBSCRIPTION_INACTIVE
+          WITH FALLBACK -> Status 1  (allowed, nothing consumed)
+    
+      So a school whose paid plan had lapsed could not publish a job even
+      though publishing is FREE, while a school that never paid could —
+      which is the exact cliff 6.5-C set out to remove, still live on the
+      two consuming paths (2.64: publishing consumes, applying does not).
+    
+      ⚠️ THE CALLER RESOLVES THEM, NOT THIS PROCEDURE. USP_ResolveEntitlement
+      returns the plan's own mapping AND the fallback's in ONE query, and
+      EntitlementResolution has carried all four since 6.5-C — the C# path
+      simply had nowhere to put them. Deciding the fallback here instead
+      would be a second read that can disagree with the first, which is
+      the PLAN_CHANGED hazard the core's own header describes.
+    */
+    @FallbackPlanId         int     = NULL,
+    @FallbackHasMapping     tinyint = 0,
+    @FallbackIsIncluded     tinyint = 0,
+    @FallbackQuotaPerPeriod int     = NULL,
     @ActorUserId      bigint  = NULL
 AS
 BEGIN
@@ -560,6 +591,10 @@ BEGIN
             @IsIncluded      = @IsIncluded,
             @QuotaPerPeriod  = @QuotaPerPeriod,
             @ExpectedPlanId  = @ExpectedPlanId,
+            @FallbackPlanId         = @FallbackPlanId,
+            @FallbackHasMapping     = @FallbackHasMapping,
+            @FallbackIsIncluded     = @FallbackIsIncluded,
+            @FallbackQuotaPerPeriod = @FallbackQuotaPerPeriod,
             @Units           = 1,
             @RefEntityTypeId = 1,                 -- JOB
             @RefEntityUid    = @JobUid,

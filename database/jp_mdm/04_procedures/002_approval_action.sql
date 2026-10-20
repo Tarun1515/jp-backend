@@ -273,23 +273,52 @@ BEGIN
 
             IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;
 
-            DECLARE @Params nvarchar(max) = (
-                SELECT @RequestId AS requestId, @ActionTypeId AS actionTypeId,
-                       @ActionByUserId AS actionByUserId, @RowVersion AS rowVersion
-                FOR JSON PATH, WITHOUT_ARRAY_WRAPPER);
+            /*
+              🔴 CLASSIFY FIRST, LOG WHAT IS LEFT — G31, CLOSED IN PHASE 8-0.
 
-            EXEC dbo.USP_LogError @ErrorNumber = @ErrNumber, @ErrorSeverity = @ErrSeverity,
-                 @ErrorState = @ErrState, @ErrorProcedure = @ErrProcedure, @ErrorLine = @ErrLine,
-                 @ErrorMessage = @ErrMessage, @ParametersJson = @Params,
-                 @ContextInfo = N'USP_ProcessApprovalAction', @CreatedBy = @ActionByUserId;
+              Until 8-0 this block logged EVERY error and then classified, so
+              each ordinary lost race wrote a row into t_mdm_error_log. Two
+              administrators pressing Approve on the same request within a
+              second of each other is this product's daily behaviour, not a
+              fault, and 6A-0 measured exactly one log row per race.
 
-            -- 50023 is the lost race, not a fault: answer it as a conflict so
-            -- the caller can reload, rather than as a 500.
+              ⚠️ THE DAMAGE IS SLOW AND ONE-DIRECTIONAL. An error log that
+              fills with non-errors is an error log nobody reads, and the day
+              somebody looks for a real bug in it they are looking through
+              noise. That is the whole reason the table exists.
+
+              🔴 THIS NOW MATCHES 5A, WHICH IS THE POINT. USP_ApplyToJob
+              classifies an expected 2601 on its own index and logs only what
+              it could NOT classify. Two procedures in one product answering
+              the same question — "is this error news?" — in opposite ways is
+              worse than either answer.
+
+              ⚠️ WHAT IS DELIBERATELY NOT SUPPRESSED: anything that is not
+              50023. A deadlock, a constraint violation, a bug in this
+              procedure — all of them still log and still THROW, which is the
+              negative the suite forces rather than assumes.
+            */
             IF @ErrNumber = 50023
+            BEGIN
+                -- The lost race: answered as a conflict so the caller reloads,
+                -- never as a 500, and never as a log row.
                 SELECT @Status = 0, @Code = 'CONCURRENCY_CONFLICT',
                        @Message = N'Someone else has already actioned this request. Reload to see the current state.';
+            END
             ELSE
+            BEGIN
+                DECLARE @Params nvarchar(max) = (
+                    SELECT @RequestId AS requestId, @ActionTypeId AS actionTypeId,
+                           @ActionByUserId AS actionByUserId, @RowVersion AS rowVersion
+                    FOR JSON PATH, WITHOUT_ARRAY_WRAPPER);
+
+                EXEC dbo.USP_LogError @ErrorNumber = @ErrNumber, @ErrorSeverity = @ErrSeverity,
+                     @ErrorState = @ErrState, @ErrorProcedure = @ErrProcedure, @ErrorLine = @ErrLine,
+                     @ErrorMessage = @ErrMessage, @ParametersJson = @Params,
+                     @ContextInfo = N'USP_ProcessApprovalAction', @CreatedBy = @ActionByUserId;
+
                 THROW;
+            END
         END CATCH
     END
 

@@ -159,6 +159,16 @@ builder.Services.AddCors(cors => cors.AddPolicy(CorsPolicyName, policy =>
 */
 JP.App.Api.Startup.ContactLeakGuard.Verify();
 
+/*
+  🔴 AND THE SECOND STARTUP GUARD — G38, PHASE 8-0.
+
+  Same family, same reasoning: a rule that only exists in comments is a rule
+  that has already been broken once. This one refuses to start if a consuming
+  path can reach the entitlement core without the free-plan fallback, which is
+  how a lapsed school came to be refused a FREE job publish.
+*/
+JP.App.Api.Startup.EntitlementFallbackGuard.Verify();
+
 // ---------------------------------------------------------------------------
 // Validation — Phase 7A
 // ---------------------------------------------------------------------------
@@ -217,6 +227,76 @@ else
 {
     app.UseHttpsRedirection();
     app.UseHsts();
+}
+
+/*
+  🔴 FORWARDED HEADERS FIRST, AND BEFORE THE RATE LIMITER — G42, PHASE 8-0.
+
+  Behind a reverse proxy every request arrives from the proxy, so a per-IP
+  limit becomes a per-SITE limit: the fourth visitor to use the contact form in
+  an hour is refused because the first three shared the proxy's address. G42
+  recorded that as the cost of not reading X-Forwarded-For.
+
+  This reads it — but only from addresses the configuration names. That
+  distinction is the whole point: an unlisted peer's X-Forwarded-For is
+  ignored, so a client cannot hand itself a fresh budget by inventing a header.
+
+  ⚠️ ORDER IS LOAD-BEARING. UseForwardedHeaders rewrites
+  Connection.RemoteIpAddress; the limiter partitions on that value. Placed
+  after UseRateLimiter it would rewrite the address AFTER the decision that
+  needed it, and nothing would fail — the limits would simply go on being
+  per-site. A verification asserts this ordering for that reason.
+
+  ⚠️ OFF BY DEFAULT. Enabling it without a KnownProxies list is how a
+  deployment starts trusting a header from anybody; the shipped posture is to
+  see the immediate peer and say so.
+*/
+var forwarded = builder.Configuration.GetSection("ForwardedHeaders");
+
+if (forwarded.GetValue("Enabled", false))
+{
+    var options = new Microsoft.AspNetCore.Builder.ForwardedHeadersOptions
+    {
+        ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+            | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
+        ForwardLimit = forwarded.GetValue("ForwardLimit", 1),
+    };
+
+    /*
+      ⚠️ The defaults are CLEARED first. ForwardedHeadersOptions ships with
+      loopback already trusted, so leaving them in place would mean a locally
+      running client is trusted to set its own address — in development that is
+      every browser on the machine.
+    */
+    options.KnownProxies.Clear();
+    options.KnownNetworks.Clear();
+
+    foreach (var proxy in forwarded.GetSection("KnownProxies").Get<string[]>() ?? [])
+    {
+        if (System.Net.IPAddress.TryParse(proxy, out var address))
+        {
+            options.KnownProxies.Add(address);
+        }
+        else
+        {
+            throw new InvalidOperationException(
+                $"ForwardedHeaders:KnownProxies contains '{proxy}', which is not an IP address. "
+                + "A typo here silently trusts nothing, so it fails loudly instead.");
+        }
+    }
+
+    app.UseForwardedHeaders(options);
+
+    app.Logger.LogInformation(
+        "Forwarded headers ON — trusting X-Forwarded-For from {Count} proxy address(es), {Limit} hop(s). "
+        + "Rate limits partition on the forwarded client address.",
+        options.KnownProxies.Count, options.ForwardLimit);
+}
+else
+{
+    app.Logger.LogInformation(
+        "Forwarded headers OFF — rate limits partition on the immediate peer address. "
+        + "Behind a reverse proxy that is ONE bucket for the whole site (G42).");
 }
 
 app.UseCors(CorsPolicyName);

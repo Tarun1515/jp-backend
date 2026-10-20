@@ -38,7 +38,10 @@ internal interface IJobRepository
     Task<PublishRow> PublishAsync(
         long schoolId, Guid userUid, long jobId, Guid ownerUid,
         int featureId, int gatingModeId, bool hasMapping, bool isIncluded, int? quotaPerPeriod,
-        int expectedPlanId, long actorUserId, CancellationToken cancellationToken);
+        int expectedPlanId,
+        int? fallbackPlanId, bool fallbackHasMapping, bool fallbackIsIncluded,
+        int? fallbackQuotaPerPeriod,
+        long actorUserId, CancellationToken cancellationToken);
 
     Task<ProcResult> CloseAsync(
         long schoolId, Guid userUid, long jobId, long actorUserId, CancellationToken cancellationToken);
@@ -134,10 +137,28 @@ internal sealed class JobRepository : BaseRepository, IJobRepository
         return QuerySingleAsync<ProcResult>("USP_SaveJob", p, cancellationToken);
     }
 
+    /// <summary>Publish, and consume the posting allowance in one transaction.</summary>
+    /// <remarks>
+    /// 🔴 THE FOUR FALLBACK ARGUMENTS ARE NOT OPTIONAL HERE — G38.
+    ///
+    /// Until Phase 8-0 this method had no fallback parameters at all, so
+    /// USP_PublishJob called the consume core without them and the core took
+    /// its pre-6.5 branch: a school whose paid plan had lapsed was refused
+    /// SUBSCRIPTION_INACTIVE rather than dropping to the free plan's
+    /// allowance. Measured before the fix, on one lapsed owner and a FREE
+    /// feature: Status 0 without them, Status 1 with them.
+    ///
+    /// ⚠️ They are positional and have no defaults, deliberately. A default
+    /// would let the next caller omit them and re-open the cliff silently,
+    /// which is precisely how this one was opened.
+    /// </remarks>
     public Task<PublishRow> PublishAsync(
         long schoolId, Guid userUid, long jobId, Guid ownerUid,
         int featureId, int gatingModeId, bool hasMapping, bool isIncluded, int? quotaPerPeriod,
-        int expectedPlanId, long actorUserId, CancellationToken cancellationToken)
+        int expectedPlanId,
+        int? fallbackPlanId, bool fallbackHasMapping, bool fallbackIsIncluded,
+        int? fallbackQuotaPerPeriod,
+        long actorUserId, CancellationToken cancellationToken)
     {
         var p = new DynamicParameters();
         p.Add("@SchoolId", schoolId, DbType.Int64);
@@ -150,6 +171,10 @@ internal sealed class JobRepository : BaseRepository, IJobRepository
         p.Add("@IsIncluded", isIncluded ? (byte)1 : (byte)0, DbType.Byte);
         p.Add("@QuotaPerPeriod", quotaPerPeriod, DbType.Int32);
         p.Add("@ExpectedPlanId", expectedPlanId, DbType.Int32);
+        p.Add("@FallbackPlanId", fallbackPlanId, DbType.Int32);
+        p.Add("@FallbackHasMapping", fallbackHasMapping ? (byte)1 : (byte)0, DbType.Byte);
+        p.Add("@FallbackIsIncluded", fallbackIsIncluded ? (byte)1 : (byte)0, DbType.Byte);
+        p.Add("@FallbackQuotaPerPeriod", fallbackQuotaPerPeriod, DbType.Int32);
         p.Add("@ActorUserId", actorUserId, DbType.Int64);
 
         return QuerySingleAsync<PublishRow>("USP_PublishJob", p, cancellationToken);

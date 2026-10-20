@@ -152,6 +152,18 @@ internal sealed class InviteService : IInviteService
                 (byte)(resolution.Resolution.HasMapping ? 1 : 0),
                 (byte)(resolution.Resolution.IsIncluded ? 1 : 0),
                 resolution.Resolution.QuotaPerPeriod, resolution.PlanId,
+
+                /*
+                  🔴 G38 — the fallback, which this call used to drop. A school
+                  whose paid plan had lapsed was refused SUBSCRIPTION_INACTIVE
+                  instead of falling back to the free plan's invite allowance.
+                  Resolved in the same query as the primary mapping (6.5-C), so
+                  passing it here cannot disagree with the read above.
+                */
+                resolution.Resolution.FallbackPlanId,
+                (byte)(resolution.Resolution.FallbackHasMapping ? 1 : 0),
+                (byte)(resolution.Resolution.FallbackIsIncluded ? 1 : 0),
+                resolution.Resolution.FallbackQuotaPerPeriod,
                 caller.GetUserId(), cancellationToken).ConfigureAwait(false);
 
             if (row.Code == ErrorCodes.PlanChanged && attempt < 2)

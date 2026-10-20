@@ -71,6 +71,25 @@ CREATE OR ALTER PROCEDURE dbo.USP_SendInvite
     @QuotaPerPeriod   int     = NULL,
     @ExpectedPlanId   int     = NULL,
 
+    /*
+      🔴 THE FALLBACK, THREADED THROUGH — G38, CLOSED IN PHASE 8-0.
+
+      Identical to 014's: this procedure called USP_ConsumeFeatureCore without
+      these four, so the core saw @FallbackPlanId = NULL and a school whose
+      paid plan had lapsed was refused SUBSCRIPTION_INACTIVE instead of
+      dropping to the free plan's allowance. Measured on a lapsed owner before
+      the change: Status 0 SUBSCRIPTION_INACTIVE without them, Status 1 with.
+
+      ⚠️ The invite path is the SECOND consuming action (2.64) and it had the
+      same hole as publishing — which is the useful part of the finding. One
+      forgotten parameter in one procedure is a slip; the same omission in both
+      procedures that consume is a shape the next one would have copied.
+    */
+    @FallbackPlanId         int     = NULL,
+    @FallbackHasMapping     tinyint = 0,
+    @FallbackIsIncluded     tinyint = 0,
+    @FallbackQuotaPerPeriod int     = NULL,
+
     @ActorUserId      bigint  = NULL
 AS
 BEGIN
@@ -174,6 +193,10 @@ BEGIN
             @IsIncluded      = @IsIncluded,
             @QuotaPerPeriod  = @QuotaPerPeriod,
             @ExpectedPlanId  = @ExpectedPlanId,
+            @FallbackPlanId         = @FallbackPlanId,
+            @FallbackHasMapping     = @FallbackHasMapping,
+            @FallbackIsIncluded     = @FallbackIsIncluded,
+            @FallbackQuotaPerPeriod = @FallbackQuotaPerPeriod,
             @Units           = 1,
             @RefEntityTypeId = 2,                 -- INVITE
             @RefEntityUid    = @InviteUid,

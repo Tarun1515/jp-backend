@@ -233,7 +233,33 @@ CREATE OR ALTER PROCEDURE dbo.USP_ConsumeFeatureCore
       Every API path supplies it, and the verification asserts that the API
       path yields the free baseline rather than a refusal.
     */
-    @FallbackPlanId   int              = NULL,
+    /*
+      🔴 NO DEFAULT — G38, SETTLED IN PHASE 8-0.
+
+      This parameter had "= NULL" and NULL meant pre-6.5 behaviour: a lapsed
+      subscription resolved to no effective plan and the chain refused with
+      SUBSCRIPTION_INACTIVE. The gap called that a risk for "some future
+      procedure that forgets it". Two shipped procedures already had —
+      USP_PublishJob and USP_SendInvite, the only two consuming paths in the
+      product (2.64) — so a lapsed school could not publish a job even though
+      publishing is FREE, while a school that never paid could.
+
+      The default was what made forgetting silent. Now the server refuses the
+      call outright:
+
+          Procedure or function 'USP_ConsumeFeatureCore' expects parameter
+          '@FallbackPlanId', which was not supplied.
+
+      ⚠️ PASSING NULL IS STILL ALLOWED, and that is the distinction worth
+      having: "explicitly no fallback" is a decision somebody wrote down, and
+      "forgot the parameter" is an accident. They used to be the same thing.
+
+      ⚠️ THE WRAPPER KEEPS ITS DEFAULT, deliberately. USP_ConsumeFeature is
+      the documented SQL-level entry point and the suites exercise pre-6.5
+      behaviour through it on purpose; it passes NULL down explicitly. The
+      strictness belongs where the decision is made, not where it is quoted.
+    */
+    @FallbackPlanId   int,
 
     /*
       🔴 THE FALLBACK PLAN'S OWN MAPPING, because falling back to the free plan
@@ -1206,6 +1232,55 @@ BEGIN
       AND (@FeatureId IS NULL OR l.FeatureId = @FeatureId)
       AND l.Is_Deleted = 0
     ORDER BY l.EntryId DESC;
+END
+GO
+
+/*==============================================================================
+  BUILD GUARD — EVERY CALLER OF THE CONSUME CORE DECLARES A FALLBACK OF ITS OWN
+==============================================================================*/
+
+/*
+  🔴 G38's SECOND HALF. Making @FallbackPlanId required stops a caller omitting
+  it; it does not stop a caller hardcoding NULL because it has nothing better
+  to pass. The procedures that call the core are wrappers around a resolution
+  the API performed, so each of them must take the fallback FROM ITS OWN
+  CALLER — which means declaring the parameter itself.
+
+  Checked structurally, through sys.parameters: a procedure that references the
+  core and has no @FallbackPlanId parameter of its own cannot be threading one
+  through, whatever its comments say.
+
+  ⚠️ Dependencies name the reference; parameters name the capability. Neither
+  can be faked by prose, which is why both are used rather than a text search
+  for the argument — 6.5A and 7B both recorded that a text guard cannot tell
+  code from a comment about code.
+
+  Proven to fire: removing the four parameters from USP_SendInvite and
+  redeploying fails this with that procedure named.
+*/
+DECLARE @NoFallback nvarchar(1000) = N'';
+
+SELECT @NoFallback = STRING_AGG(CAST(callers.name AS nvarchar(128)), N', ')
+  FROM (
+        SELECT DISTINCT o.name, o.object_id
+          FROM sys.sql_expression_dependencies d
+          INNER JOIN sys.objects o ON o.object_id = d.referencing_id
+         WHERE d.referenced_entity_name = 'USP_ConsumeFeatureCore'
+           AND o.type = 'P'
+           AND o.name <> 'USP_ConsumeFeature'   -- the documented entry point; see its note
+       ) AS callers
+ WHERE NOT EXISTS (SELECT 1 FROM sys.parameters p
+                    WHERE p.object_id = callers.object_id
+                      AND p.name = '@FallbackPlanId');
+
+IF ISNULL(@NoFallback, N'') <> N''
+BEGIN
+    DECLARE @msgFb nvarchar(1200) =
+        N'013_entitlement: 🔴 A PROCEDURE CALLS THE CONSUME CORE WITHOUT A FALLBACK OF ITS OWN: '
+        + @NoFallback
+        + N'. It must declare @FallbackPlanId (and its three companions) and thread them from the caller that resolved them. Without that, a subscription past EndsOn is refused SUBSCRIPTION_INACTIVE instead of dropping to the free plan - the 6.5-C cliff, which G38 found live in USP_PublishJob and USP_SendInvite.';
+
+    RAISERROR('%s', 16, 1, @msgFb);
 END
 GO
 

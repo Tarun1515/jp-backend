@@ -36,7 +36,10 @@ internal interface IInviteRepository
     Task<SendInviteRow> SendAsync(
         long schoolId, Guid userUid, SendInviteRequest request, Guid ownerUid,
         int featureId, byte gatingModeId, byte hasMapping, byte isIncluded,
-        int? quotaPerPeriod, int? expectedPlanId, long actorUserId,
+        int? quotaPerPeriod, int? expectedPlanId,
+        int? fallbackPlanId, byte fallbackHasMapping, byte fallbackIsIncluded,
+        int? fallbackQuotaPerPeriod,
+        long actorUserId,
         CancellationToken cancellationToken);
 
     Task<ProcResult> MarkViewedAsync(Guid userUid, long inviteId, CancellationToken cancellationToken);
@@ -127,10 +130,21 @@ internal sealed class InviteRepository : BaseRepository, IInviteRepository
         return (mapped, total);
     }
 
+    /// <summary>
+    /// Send, and consume the invitation allowance in one transaction.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 The four fallback arguments are required for the same reason as
+    /// JobRepository.PublishAsync — see G38. Inviting is the other consuming
+    /// action (2.64) and it had the identical omission.
+    /// </remarks>
     public Task<SendInviteRow> SendAsync(
         long schoolId, Guid userUid, SendInviteRequest request, Guid ownerUid,
         int featureId, byte gatingModeId, byte hasMapping, byte isIncluded,
-        int? quotaPerPeriod, int? expectedPlanId, long actorUserId,
+        int? quotaPerPeriod, int? expectedPlanId,
+        int? fallbackPlanId, byte fallbackHasMapping, byte fallbackIsIncluded,
+        int? fallbackQuotaPerPeriod,
+        long actorUserId,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -149,6 +163,10 @@ internal sealed class InviteRepository : BaseRepository, IInviteRepository
         p.Add("@IsIncluded", isIncluded, DbType.Byte);
         p.Add("@QuotaPerPeriod", quotaPerPeriod, DbType.Int32);
         p.Add("@ExpectedPlanId", expectedPlanId, DbType.Int32);
+        p.Add("@FallbackPlanId", fallbackPlanId, DbType.Int32);
+        p.Add("@FallbackHasMapping", fallbackHasMapping, DbType.Byte);
+        p.Add("@FallbackIsIncluded", fallbackIsIncluded, DbType.Byte);
+        p.Add("@FallbackQuotaPerPeriod", fallbackQuotaPerPeriod, DbType.Int32);
         p.Add("@ActorUserId", actorUserId, DbType.Int64);
 
         return QuerySingleAsync<SendInviteRow>("USP_SendInvite", p, cancellationToken);

@@ -135,16 +135,22 @@ internal static class PublicRateLimiting
     /// 🔴 The client address, and behind a proxy this is the PROXY's.
     /// </summary>
     /// <remarks>
-    /// ⚠️ X-Forwarded-For is deliberately NOT read here. A header a client can
-    /// set is a rate limit a client can reset — every request with a fresh
-    /// fake value would get a fresh budget. Honouring it requires
-    /// ForwardedHeadersOptions with a KnownProxies list, which is a deployment
-    /// decision this project has not made yet; until it does, the honest
-    /// behaviour is to limit what we can actually see.
+    /// ⚠️ X-Forwarded-For IS NOT READ HERE, AND THAT IS STILL TRUE — but it is
+    /// no longer the end of the story. Phase 8-0 (G42) added
+    /// ForwardedHeaders middleware ahead of the limiter: when
+    /// <c>ForwardedHeaders:Enabled</c> is true, it rewrites
+    /// <c>Connection.RemoteIpAddress</c> from the header BEFORE this function
+    /// runs, and only for peers listed in <c>KnownProxies</c>.
     ///
-    /// The cost is stated plainly: behind a single reverse proxy, every visitor
-    /// shares one bucket. 2.35 already records the sibling caveat that windows
-    /// are per process.
+    /// So this function keeps reading the one value it can trust, and the
+    /// decision about whether that value came from a proxy lives in
+    /// configuration where a deployment can answer it. A header a client can
+    /// set is still a limit a client can reset — which is why an unlisted peer
+    /// gets no say.
+    ///
+    /// ⚠️ OFF BY DEFAULT. With no proxy configured, this is the immediate peer
+    /// and behind an unconfigured reverse proxy every visitor shares one
+    /// bucket. 2.35 records the sibling caveat that windows are per process.
     /// </remarks>
     private static string ClientIp(HttpContext context) =>
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown";

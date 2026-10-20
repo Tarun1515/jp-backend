@@ -178,11 +178,26 @@ internal sealed class JobService : IJobService
                     ErrorCodes.FeatureDisabled, System.Net.HttpStatusCode.Forbidden);
             }
 
+            /*
+              🔴 THE FALLBACK TRAVELS WITH THE RESOLUTION — G38.
+
+              resolution has carried FallbackPlanId and its mapping since
+              6.5-C, resolved in the SAME query as the plan's own, and this
+              call simply dropped them on the floor. A lapsed school was
+              therefore refused SUBSCRIPTION_INACTIVE on a FREE feature.
+
+              ⚠️ Not re-resolved here. The fallback has to come from the same
+              read as the primary mapping, or the two can disagree — which is
+              the PLAN_CHANGED hazard the retry loop above exists for.
+            */
             var row = await _jobs.PublishAsync(
                 schoolId, caller.GetUserUid(), jobId, ownerUid,
                 resolution.FeatureId, resolution.GatingModeId, resolution.HasMapping,
                 resolution.IsIncluded, resolution.QuotaPerPeriod,
-                subscription.PlanId, caller.GetUserId(), cancellationToken).ConfigureAwait(false);
+                subscription.PlanId,
+                resolution.FallbackPlanId, resolution.FallbackHasMapping,
+                resolution.FallbackIsIncluded, resolution.FallbackQuotaPerPeriod,
+                caller.GetUserId(), cancellationToken).ConfigureAwait(false);
 
             if (row.Code == ErrorCodes.PlanChanged && attempt < 2)
             {
