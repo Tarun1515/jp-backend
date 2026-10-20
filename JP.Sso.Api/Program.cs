@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.OpenApi.Models;
 using Serilog;
+using JP.Infrastructure.Middleware;
 
 const string CorsPolicyName = "JpPortalCors";
 
@@ -149,6 +150,30 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+/*
+  🔴 SECURITY HEADERS — PHASE 8A, AND NONE OF THEM EXISTED BEFORE IT.
+
+  No nosniff, no referrer policy, no frame refusal, no CSP, on either API, for
+  eight phases. A missing response header never fails anything: it only widens
+  what a browser is willing to do with an answer it already had.
+
+  ⚠️ FIRST IN THE PIPELINE, AND THAT WAS A CORRECTION. It went in just before
+  UseCors to begin with, on the reasoning that a 429 and a CORS refusal are
+  still responses this API sent and should carry the same headers as a 200.
+
+  🔴 Measured, and the reasoning was right but the position was not: Swagger UI
+  is registered EARLIER and short-circuits, so /swagger/index.html came back
+  with none of these headers while the comment claimed four of them applied.
+  Anything that can answer a request before this line is a response without
+  headers, so this line goes before all of them.
+
+  What each header says, and why a JSON API can afford the strict answer where
+  jp-public cannot, is in
+  JP.Infrastructure/Middleware/SecurityHeadersMiddleware.cs.
+*/
+app.UseJpSecurityHeaders();
+
 
 // ---------------------------------------------------------------------------
 // Startup checks
