@@ -135,7 +135,18 @@ VALUES
 */
 ('ADMIN_ENQUIRIES',         NULL, N'Enquiries',             1, N'/enquiries',             'mail',             'ENQUIRY.MANAGE',      35, 1, 1),
 
-('ADMIN_USERS',             NULL, N'Users',                 1, N'/users',                 'users',            'USER.MANAGE',         40, 1, 1),
+/*
+  ⚠️ "Accounts", not "Users" — Phase 8-0, when the screen was built.
+
+  The screen, its heading and its copy all say accounts, because it lists
+  administrators, schools and teachers together and "users" reads as
+  something narrower. A sidebar saying one word for what the page calls
+  another is the drift SCHOOL_BRANCHES records ("Campuses", route /branches).
+
+  🔴 THE ROUTE STAYS /users. Renaming it would break every saved link for a
+  label change — exactly the trade 3F made for campuses.
+*/
+('ADMIN_USERS',             NULL, N'Accounts',              1, N'/users',                 'users',            'USER.MANAGE',         40, 1, 1),
 ('ADMIN_MASTERS',           NULL, N'Master data',           1, N'/masters',               'database',         'SETTINGS.MANAGE',     50, 1, 1),
 
 /*

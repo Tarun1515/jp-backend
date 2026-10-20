@@ -267,6 +267,7 @@ public static class DependencyInjection
 
         // Phase 7B. Moderation, reports, featured, the site copy, enquiries.
         services.AddScoped<IAdminDeskService, AdminDeskService>();
+        services.AddScoped<IAdminAnalyticsService, AdminAnalyticsService>();
 
         /*
           Phase 7A. The job-view counter is a SINGLETON and a BackgroundService

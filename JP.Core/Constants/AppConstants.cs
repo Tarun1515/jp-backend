@@ -291,6 +291,23 @@ public static class AppConstants
           the same kind of act would be a distinction with nothing on either
           side of it.
         */
+        /// <summary>
+        /// 🔴 ASKED FOR THE FIRST TIME IN 8-0, and it has been seeded since 1D.
+        /// </summary>
+        /// <remarks>
+        /// ⚠️ A SCHOOL HOLDS THIS TOO — a school Viewer's menu carries
+        /// REPORT.VIEW for its own reports. So on the platform analytics
+        /// surface the permission is only half the gate: the service also
+        /// requires an ADMIN user type, because platform-wide totals are not
+        /// a school's reports with a wider WHERE clause.
+        ///
+        /// 🔒 And the surface behind it answers HOW MANY, never WHO. Both
+        /// identity databases' analytics procedures carry a build guard that
+        /// fails if an email, a uid, a requestor or a request number appears
+        /// in them — REPORT.VIEW is not USER.MANAGE and not VERIFICATION.*.
+        /// </remarks>
+        public const string ReportView = "REPORT.VIEW";
+
         public const string ModerationJob = "MODERATION.JOB";
         public const string ModerationReport = "MODERATION.REPORT";
 

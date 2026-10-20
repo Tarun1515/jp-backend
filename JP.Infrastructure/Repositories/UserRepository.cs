@@ -6,6 +6,7 @@ using JP.Domain.Users;
 using JP.Infrastructure.Data;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using JP.Domain.Admin;
 
 namespace JP.Infrastructure.Repositories;
 
@@ -352,6 +353,20 @@ internal sealed class UserRepository : BaseRepository, IUserRepository
 
         return QuerySingleAsync<UnlockResult>("USP_UnlockUser", p, cancellationToken);
     }
+
+    public Task<(IReadOnlyList<RegistrationCountDto> Rows, IdentityTotalsDto Totals)>
+        GetIdentityAnalyticsAsync(CancellationToken cancellationToken) =>
+        QueryMultipleAsync<(IReadOnlyList<RegistrationCountDto>, IdentityTotalsDto)>(
+            "USP_GetIdentityAnalytics",
+            async grid =>
+            {
+                var rows = (await grid.ReadAsync<RegistrationCountDto>().ConfigureAwait(false)).AsList();
+                var totals = await grid.ReadFirstOrDefaultAsync<IdentityTotalsDto>().ConfigureAwait(false);
+
+                return (rows, totals ?? new IdentityTotalsDto());
+            },
+            new DynamicParameters(),
+            cancellationToken);
 
     /// <summary>
     /// Two result sets: the page, then the total before paging.

@@ -6,8 +6,21 @@ using JP.Domain.Common;
 using JP.Infrastructure.Data;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using JP.Domain.Admin;
 
 namespace JP.Infrastructure.Repositories;
+
+/// <summary>The three result sets USP_GetApprovalAnalytics returns.</summary>
+/// <remarks>
+/// ⚠️ A class rather than a tuple, for the reason AppAnalyticsResult records:
+/// two lists of different shapes read positionally is a swap that compiles.
+/// </remarks>
+internal sealed class ApprovalAnalyticsResult
+{
+    public IReadOnlyList<ApprovalCountDto> Counts { get; set; } = [];
+    public IReadOnlyList<QueueWaitDto> Waits { get; set; } = [];
+    public ApprovalTotalsDto Totals { get; set; } = new();
+}
 
 internal interface IApprovalRepository
 {
@@ -29,6 +42,18 @@ internal interface IApprovalRepository
     Task<ProcessActionProcResult> ProcessActionAsync(long requestId, int actionTypeId, long actionByUserId, int rowVersion, int? rejectionReasonId, string? remarks, string? ipAddress, string? actorRoleIds, CancellationToken cancellationToken);
 
     Task<ProcResult> ResubmitAsync(long requestId, long actionByUserId, string? remarks, int rowVersion, string? ipAddress, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The jp_mdm half of the analytics screen: approvals by type and status,
+    /// how long the oldest OPEN one of each type has waited, and the headline.
+    /// </summary>
+    /// <remarks>
+    /// 🔒 Counts and waits only. 011's build guard fails if a requestor,
+    /// approver, entity or request number appears in the procedure — this read
+    /// is behind REPORT.VIEW, and which request belongs to the verification
+    /// queue behind VERIFICATION.*.
+    /// </remarks>
+    Task<ApprovalAnalyticsResult> GetApprovalAnalyticsAsync(CancellationToken cancellationToken);
 
     Task<IReadOnlyList<PendingCountDto>> GetPendingCountsAsync(Guid? organizationUid, CancellationToken cancellationToken);
 
@@ -283,6 +308,25 @@ internal sealed class ApprovalRepository : BaseRepository, IApprovalRepository
 
         return QuerySingleAsync<ProcResult>("USP_ResubmitApprovalRequest", p, cancellationToken);
     }
+
+    public Task<ApprovalAnalyticsResult> GetApprovalAnalyticsAsync(CancellationToken cancellationToken) =>
+        QueryMultipleAsync<ApprovalAnalyticsResult>(
+            "USP_GetApprovalAnalytics",
+            async grid =>
+            {
+                var counts = (await grid.ReadAsync<ApprovalCountDto>().ConfigureAwait(false)).AsList();
+                var waits = (await grid.ReadAsync<QueueWaitDto>().ConfigureAwait(false)).AsList();
+                var totals = await grid.ReadFirstOrDefaultAsync<ApprovalTotalsDto>().ConfigureAwait(false);
+
+                return new ApprovalAnalyticsResult
+                {
+                    Counts = counts,
+                    Waits = waits,
+                    Totals = totals ?? new ApprovalTotalsDto(),
+                };
+            },
+            new DynamicParameters(),
+            cancellationToken);
 
     public Task<IReadOnlyList<PendingCountDto>> GetPendingCountsAsync(
         Guid? organizationUid,

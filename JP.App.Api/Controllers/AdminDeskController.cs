@@ -43,16 +43,40 @@ public sealed class AdminDeskController : ControllerBase
 {
     private readonly IAdminDeskService _desk;
 
-    public AdminDeskController(IAdminDeskService desk) => _desk = desk;
+    private readonly IAdminAnalyticsService _analytics;
+
+    public AdminDeskController(IAdminDeskService desk, IAdminAnalyticsService analytics)
+    {
+        _desk = desk;
+        _analytics = analytics;
+    }
 
     // ---- moderation --------------------------------------------------------
 
-    /// <summary>Pull a job off the public site. 🔒 MODERATION.JOB.</summary>
+    /// <summary>Platform analytics. 🔒 REPORT.VIEW, and an ADMIN user type.</summary>
     /// <remarks>
-    /// 🔴 THE APPLICATIONS ARE NOT TOUCHED. The candidates did nothing wrong —
-    /// 025 writes the job's status and one log row, and a build guard fails if
-    /// it ever reads or writes application data.
+    /// 🔴 ONE CALL, THREE DATABASES — assembled in the service, because no
+    /// object in this product may join across them (2.2).
+    ///
+    /// 🔒 HOW MANY, NEVER WHO. No email, no uid, no request number, no school
+    /// or teacher name appears in the response, and the two identity
+    /// databases' procedures carry a build guard that fails if one does.
+    /// REPORT.VIEW is not USER.MANAGE.
+    ///
+    /// ⚠️ Every figure is COUNTED. Not one denormalised counter is read — 027's
+    /// guard enforces that, because one phase ago the moderation queue read
+    /// ApplicationCount and reported 0 applied for every advert.
     /// </remarks>
+    [HttpGet("analytics")]
+    [ProducesResponseType(typeof(Response<AdminAnalyticsDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetAnalytics(CancellationToken cancellationToken)
+    {
+        var data = await _analytics.GetAsync(User, cancellationToken).ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(data));
+    }
+
     /// <summary>Jobs to moderate, newest-and-noisiest first. 🔒 MODERATION.JOB.</summary>
     /// <remarks>
     /// 🔴 ADDED SO THE DESK IS USABLE WITHOUT ALREADY KNOWING A UID. Pull and
@@ -83,6 +107,12 @@ public sealed class AdminDeskController : ControllerBase
         return Ok(ApiResponse.Paged(rows, total));
     }
 
+    /// <summary>Pull a job off the public site. 🔒 MODERATION.JOB.</summary>
+    /// <remarks>
+    /// 🔴 THE APPLICATIONS ARE NOT TOUCHED. The candidates did nothing wrong —
+    /// 025 writes the job's status and one log row, and a build guard fails if
+    /// it ever reads or writes application data.
+    /// </remarks>
     [HttpPost("jobs/{jobUid:guid}/pull")]
     [ProducesResponseType(typeof(Response<object>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]

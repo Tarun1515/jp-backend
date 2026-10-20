@@ -51,6 +51,22 @@ internal sealed class FeaturedWindowRow
     public string? EntityStatusName { get; set; }
 }
 
+/// <summary>
+/// The four result sets USP_GetAppAnalytics returns, carried together.
+/// </summary>
+/// <remarks>
+/// ⚠️ A class rather than a four-part tuple: a tuple of three lists and a
+/// totals object is read positionally at every call site, and swapping two
+/// lists of the same type compiles.
+/// </remarks>
+internal sealed class AppAnalyticsResult
+{
+    public IReadOnlyList<StatusCountDto> Jobs { get; set; } = [];
+    public IReadOnlyList<StatusCountDto> Applications { get; set; } = [];
+    public IReadOnlyList<StatusCountDto> Invites { get; set; } = [];
+    public AppTotalsDto Totals { get; set; } = new();
+}
+
 internal interface IAdminDeskRepository
 {
     // ---- moderation --------------------------------------------------------
@@ -60,6 +76,13 @@ internal interface IAdminDeskRepository
 
     Task<ProcResult> RestoreJobAsync(
         Guid jobUid, string remarks, long actorUserId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The jp_app half of the analytics screen. 🔒 Counts only, and every one
+    /// of them DERIVED — 027's guard fails if a denormalised counter column
+    /// appears in the procedure.
+    /// </summary>
+    Task<AppAnalyticsResult> GetAppAnalyticsAsync(CancellationToken cancellationToken);
 
     Task<(IReadOnlyList<ModeratableJobDto> Rows, int Total)> SearchJobsForModerationAsync(
         int? statusId, string? searchText, Guid? jobUid, bool reportedOnly,
@@ -175,6 +198,27 @@ internal sealed class AdminDeskRepository : BaseRepository, IAdminDeskRepository
 
         return QuerySingleAsync<ProcResult>("USP_RestoreJob", p, cancellationToken);
     }
+
+    public Task<AppAnalyticsResult> GetAppAnalyticsAsync(CancellationToken cancellationToken) =>
+        QueryMultipleAsync<AppAnalyticsResult>(
+            "USP_GetAppAnalytics",
+            async grid =>
+            {
+                var jobs = (await grid.ReadAsync<StatusCountDto>().ConfigureAwait(false)).AsList();
+                var apps = (await grid.ReadAsync<StatusCountDto>().ConfigureAwait(false)).AsList();
+                var invites = (await grid.ReadAsync<StatusCountDto>().ConfigureAwait(false)).AsList();
+                var totals = await grid.ReadFirstOrDefaultAsync<AppTotalsDto>().ConfigureAwait(false);
+
+                return new AppAnalyticsResult
+                {
+                    Jobs = jobs,
+                    Applications = apps,
+                    Invites = invites,
+                    Totals = totals ?? new AppTotalsDto(),
+                };
+            },
+            new DynamicParameters(),
+            cancellationToken);
 
     public Task<(IReadOnlyList<ModeratableJobDto> Rows, int Total)> SearchJobsForModerationAsync(
         int? statusId, string? searchText, Guid? jobUid, bool reportedOnly,

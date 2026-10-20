@@ -1,4 +1,5 @@
 using JP.Domain.Users;
+using JP.Domain.Admin;
 
 namespace JP.Infrastructure.Repositories;
 
@@ -82,6 +83,14 @@ internal interface IUserRepository
 
     Task<UnlockResult> UnlockUserAsync(Guid userUid, long actionByUserId, string? remarks,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Registration counts for the analytics screen. 🔒 Counts only — the
+    /// procedure's own build guard fails if an email, mobile or uid appears in
+    /// it, because this read is behind REPORT.VIEW rather than USER.MANAGE.
+    /// </summary>
+    Task<(IReadOnlyList<RegistrationCountDto> Rows, IdentityTotalsDto Totals)>
+        GetIdentityAnalyticsAsync(CancellationToken cancellationToken);
 
     Task<(IReadOnlyList<UserListRow> Items, long Total)> GetUserListAsync(UserListRequest request,
         Guid? organizationUid, CancellationToken cancellationToken);
