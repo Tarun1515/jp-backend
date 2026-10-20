@@ -81,6 +81,17 @@ internal interface IUserRepository
     Task<UpdateStatusResult> UpdateUserStatusAsync(Guid userUid, int newStatusId, int rowVersion,
         long actionByUserId, string? remarks, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// One account's status history, newest first (G45).
+    /// </summary>
+    /// <remarks>
+    /// Returns an empty list for an account that has never had its status
+    /// changed, and throws through EnsureSuccess for one that does not exist —
+    /// those are different answers and the screen says different things.
+    /// </remarks>
+    Task<(ProcResult Status, IReadOnlyList<UserStatusHistoryItemResponse> Items)> GetUserStatusHistoryAsync(
+        Guid userUid, int top, CancellationToken cancellationToken);
+
     Task<UnlockResult> UnlockUserAsync(Guid userUid, long actionByUserId, string? remarks,
         CancellationToken cancellationToken);
 

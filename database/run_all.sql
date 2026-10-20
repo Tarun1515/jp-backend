@@ -115,6 +115,7 @@ GO
 -- every sign-in, which decision 2.2 forbids.
 :r $(DbRoot)\jp_sso\01_tables\021_m_sso_menus.sql
 :r $(DbRoot)\jp_sso\01_tables\022_t_sso_role_menus.sql
+:r $(DbRoot)\jp_sso\01_tables\023_t_sso_user_status_history.sql
 
 -- ---- indexes ---------------------------------------------------------------
 PRINT '  Indexes ...';
@@ -142,6 +143,15 @@ GO
 -- 004 because its own guard asserts the closed set of holders, and 004 is what
 -- would otherwise add one.
 :r $(DbRoot)\jp_sso\03_seed\006_seed_billing_permission.sql
+
+-- Phase 7B. ENQUIRY.MANAGE and the moderation-desk grants.
+-- 🔴 BEFORE 005_seed_menus, and the fresh-instance rehearsal in 8A is why:
+--    005 asserts that every PermissionCode its menu rows name exists, and
+--    one of them is ENQUIRY.MANAGE, which this file creates. Listed after
+--    005 it failed the whole build with "unknown PermissionCode(s):
+--    ENQUIRY.MANAGE" — on this machine the order never mattered, because
+--    7B deployed both by hand. Same reason 006 is here.
+:r $(DbRoot)\jp_sso\03_seed\008_seed_moderation_desk.sql
 -- Menus AFTER permissions: the seed resolves PermissionCode -> PermissionId
 -- and aborts on an unknown code, because a typo there would silently make an
 -- item visible to everyone rather than to nobody.
@@ -172,6 +182,9 @@ GO
 -- membership, jp_sso holds the email, and no query may join the two (2.2).
 :r $(DbRoot)\jp_sso\04_procedures\009_users_by_uid.sql
 :r $(DbRoot)\jp_sso\04_procedures\009_identity_lookup.sql
+
+-- Phase 8-0. Admin analytics over jp_sso: derived counts, no identity.
+:r $(DbRoot)\jp_sso\04_procedures\010_admin_analytics.sql
 
 
 /*==============================================================================
@@ -286,6 +299,9 @@ GO
 -- Phase 6.5A. Catalog, plan-change request, admin queue, verify + receipts.
 :r $(DbRoot)\jp_mdm\04_procedures\010_billing.sql
 
+-- Phase 8-0. Admin analytics over jp_mdm: approval queues, counts only.
+:r $(DbRoot)\jp_mdm\04_procedures\011_admin_analytics.sql
+
 
 /*==============================================================================
   DB 3 — jp_app  (business: schools, teachers, jobs, applications, CMS)
@@ -371,6 +387,16 @@ GO
 -- two databases the seam spans (2.2 / 2.48).
 :r $(DbRoot)\jp_app\01_tables\032_alter_t_app_subscriptions_payment.sql
 
+-- Phase 7A. The public surface's content: CMS blocks and FAQs.
+:r $(DbRoot)\jp_app\01_tables\033_public_content.sql
+
+-- Phase 7B. Reports, the append-only moderation log, and featured placement.
+:r $(DbRoot)\jp_app\01_tables\034_moderation_reports_featured.sql
+
+-- Phase 7B. PULLED as a job status, which is what makes a pulled advert
+-- vanish from every read that already requires JobStatusId = 2.
+:r $(DbRoot)\jp_app\01_tables\035_alter_t_app_jobs_pulled_status.sql
+
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
 -- shapes the schema. It is listed here so a database rebuilt from scratch ends
@@ -379,6 +405,9 @@ GO
 PRINT '  Backfill ...';
 GO
 :r $(DbRoot)\jp_app\03_seed\001_backfill_phase3b.sql
+
+-- Phase 7A. The public FAQ rows the anonymous site renders.
+:r $(DbRoot)\jp_app\03_seed\003_seed_public_faqs.sql
 -- PHASE 3C — the school owner rows nothing ever wrote (2.53).
 -- ⚠️ NOT run from here: it EXECs USP_ProvisionSchoolOwner, which is created in
 -- the 04_procedures section below. On a database built from scratch this line
@@ -467,6 +496,24 @@ GO
 -- this there is no data source for the employment-type dropdown and no school
 -- can post anything but a Full-time vacancy.
 :r $(DbRoot)\jp_app\04_procedures\015_app_masters.sql
+
+-- Phase 7A. The anonymous reads: job search, job detail, school pages, the
+-- contact form and the CMS blocks the public site renders.
+:r $(DbRoot)\jp_app\04_procedures\024_public_reads.sql
+
+-- Phase 7B. Moderation: pull and restore with the log, and the reports queue.
+:r $(DbRoot)\jp_app\04_procedures\025_moderation_reports.sql
+
+-- Phase 7B. CMS blocks and FAQ administration.
+:r $(DbRoot)\jp_app\04_procedures\026_admin_content.sql
+
+-- Phase 8-0. Admin analytics over jp_app: every figure derived, no counters.
+:r $(DbRoot)\jp_app\04_procedures\027_admin_analytics.sql
+
+-- Phase 8A. LAST, deliberately: guards whose subject is EVERY procedure,
+-- which can only be judged once every procedure exists. See the file header
+-- for the incident that proved this file had to exist.
+:r $(DbRoot)\jp_app\04_procedures\999_cross_file_guards.sql
 
 
 /*==============================================================================

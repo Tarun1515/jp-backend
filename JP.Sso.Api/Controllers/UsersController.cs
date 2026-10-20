@@ -80,6 +80,27 @@ public sealed class UsersController : ControllerBase
         return Ok(ApiResponse.Success("Account status updated."));
     }
 
+    /// <summary>
+    /// Every recorded status change on one account, newest first, with the
+    /// reason the administrator gave.
+    /// </summary>
+    /// <remarks>
+    /// G45. Before 8A the reason was accepted by the status endpoint and kept
+    /// only for a suspension, so a rejected school could not be told on what
+    /// grounds. Admin-only — see the service for why this read is gated
+    /// exactly as hard as the write.
+    /// </remarks>
+    [HttpGet("{uid:guid}/status-history")]
+    [ProducesResponseType(typeof(Response<IReadOnlyList<UserStatusHistoryItemResponse>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetStatusHistory(Guid uid, CancellationToken cancellationToken)
+    {
+        var items = await _users.GetStatusHistoryAsync(uid, User, cancellationToken);
+
+        return Ok(ApiResponse.Success(items));
+    }
+
     /// <summary>Lifts a lockout ahead of its automatic expiry.</summary>
     [HttpPost("{uid:guid}/unlock")]
     [ProducesResponseType(typeof(Response<object>), StatusCodes.Status200OK)]

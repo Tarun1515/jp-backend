@@ -2,6 +2,42 @@ using JP.Domain.Common;
 
 namespace JP.Domain.Users;
 
+/// <summary>
+/// One recorded status change on an account — G45, phase 8A.
+/// </summary>
+/// <remarks>
+/// 🔴 THE REASON IS ADMIN-ONLY TEXT. It is one administrator's words about
+/// somebody's account, written to be read by the next administrator who picks
+/// up the phone, and it may be true and unkind at the same time. Nothing
+/// school-facing or teacher-facing returns this type, and a build guard in
+/// 006_admin.sql asserts that no other procedure even reads the table.
+///
+/// <c>FromStatusName</c> is null for a row whose previous status is not known
+/// — see 023's header. <c>ActionByEmail</c> is null when the administrator's
+/// account no longer exists, which the history deliberately survives.
+/// </remarks>
+public sealed class UserStatusHistoryItemResponse
+{
+    public long StatusHistoryId { get; set; }
+
+    public int? FromStatusId { get; set; }
+
+    public string? FromStatusName { get; set; }
+
+    public int ToStatusId { get; set; }
+
+    public string? ToStatusName { get; set; }
+
+    public string? Reason { get; set; }
+
+    public long? ActionByUserId { get; set; }
+
+    public string? ActionByEmail { get; set; }
+
+    /// <summary>UTC, like every instant in this system (decision 2.28).</summary>
+    public DateTime CreatedOn { get; set; }
+}
+
 /*==============================================================================
   User management contracts.
 

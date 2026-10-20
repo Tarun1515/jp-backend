@@ -652,14 +652,69 @@ GO
   is a drifted product.
 
   ⚠️ A text check, deliberately, because that is the only way to see an ORDER
-  BY. It looks for the column beside the keywords that would use it, and this
-  file's own prose never puts them together.
+  BY — dependency metadata records the column, not the clause it appears in.
+
+  🔴 AND THE FIRST VERSION OF IT WAS WRONG, IN THE WAY TEXT GUARDS ARE ALWAYS
+  WRONG. It asked for '%ORDER BY%ViewCount%' and '%WHERE%j.ViewCount%', where
+  each % spans the ENTIRE procedure body: any WHERE clause anywhere, followed
+  by the column anywhere later, matched. So it could not tell a filter from a
+  projection.
+
+  It passed for two phases because no single procedure happened to contain
+  both. 8A's run_all audit put 025 in the same database, and 025 PROJECTS
+  j.ViewCount for the moderator — a column on a queue, not a decision — and
+  this guard failed the whole build over it.
+
+  ⚠️ WHY THAT WAS ONLY FOUND NOW, which is the more useful half: when 024 was
+  deployed by hand in 7A, 025 did not exist yet. A guard that reads
+  sys.sql_modules sees whatever is in the DATABASE, so its result depends on
+  what else has been deployed — and a full ordered build is the only run that
+  shows it. The audit that found eleven files missing from run_all found this
+  too.
+
+  So the patterns below name the SYNTAX that can only be a filter or a sort,
+  never a projection: a comparison operator beside the column, or an ordering
+  keyword. A projection reads "j.ViewCount," and matches none of them.
 */
-IF EXISTS (SELECT 1 FROM sys.sql_modules m
-           WHERE m.definition LIKE '%ORDER BY%ViewCount%'
-              OR m.definition LIKE '%WHERE%j.ViewCount%'
-              OR m.definition LIKE '%ViewCount DESC%')
-    RAISERROR('024_public_reads: 🔴 A procedure FILTERS or ORDERS BY ViewCount. 2.81 accepted it as a stored counter only on the condition that nothing branches on it — a maintained counter that decides what a visitor sees is a drifted product. Derive it first.', 16, 1);
+/*
+  ⚠️ ONE PATTERN LIST, NOT TWO. The first tightening duplicated the whole OR
+  chain — once to decide whether to fail and once to name the offender — which
+  is two places for the next person to update and one of them to forget. The
+  offenders are collected first; having them IS the decision.
+
+  ⚠️ AND ONE NAME IS ALLOWED, because the tightened guard immediately caught
+  the writer: USP_IncrementJobViews says SET ViewCount = ViewCount + 1, which
+  matches a comparison pattern and is the one procedure in this system whose
+  job is to maintain this counter. LIKE cannot tell SET from WHERE, so the
+  writer is named here instead — and a SECOND procedure assigning to it fails
+  this, which is the thing worth catching.
+*/
+DECLARE @vc nvarchar(1000) = N'';
+
+SELECT @vc = STRING_AGG(CAST(OBJECT_NAME(m.object_id) AS nvarchar(128)), N', ')
+  FROM sys.sql_modules m
+ WHERE OBJECT_NAME(m.object_id) <> 'USP_IncrementJobViews'
+   AND (m.definition LIKE '%ViewCount DESC%'
+     OR m.definition LIKE '%ViewCount ASC%'
+     OR m.definition LIKE '%BY ViewCount%'
+     OR m.definition LIKE '%BY j.ViewCount%'
+     OR m.definition LIKE '%ViewCount >%'
+     OR m.definition LIKE '%ViewCount <%'
+     OR m.definition LIKE '%ViewCount =%'
+     OR m.definition LIKE '%ViewCount>%'
+     OR m.definition LIKE '%ViewCount<%'
+     OR m.definition LIKE '%ViewCount BETWEEN%'
+     OR m.definition LIKE '%ViewCount IN (%');
+
+IF ISNULL(@vc, N'') <> N''
+BEGIN
+    DECLARE @vcMsg nvarchar(1400) =
+        N'024_public_reads: 🔴 A PROCEDURE FILTERS OR ORDERS BY ViewCount: '
+        + @vc
+        + N'. 2.81 accepted one stored counter in a system where every other count is derived, on the stated condition that nothing branches on it — a maintained counter that decides what a visitor sees is a drifted product. Derive it first. Projecting the column is fine; sorting or filtering on it is not.';
+
+    RAISERROR('%s', 16, 1, @vcMsg);
+END
 GO
 
 PRINT '    Public reads ready (jobs, filters, faqs, blocks, views, enquiry).';

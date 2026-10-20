@@ -25,6 +25,9 @@ public interface IUserService
     Task UpdateStatusAsync(Guid userUid, UpdateUserStatusRequest request, ClaimsPrincipal caller,
         CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<UserStatusHistoryItemResponse>> GetStatusHistoryAsync(
+        Guid userUid, ClaimsPrincipal caller, CancellationToken cancellationToken);
+
     Task UnlockAsync(Guid userUid, UnlockUserRequest request, ClaimsPrincipal caller,
         CancellationToken cancellationToken);
 }
@@ -157,6 +160,36 @@ internal sealed class UserService : IUserService
         _logger.LogInformation(
             "Account {UserUid} moved to status {StatusId} by {ActorUid}. {RevokedTokenCount} token(s) revoked, role granted: {RoleGranted}.",
             userUid, request.NewStatusId, caller.GetUserUid(), result.RevokedTokenCount, result.RoleGranted);
+    }
+
+    /// <summary>
+    /// One account's status history (G45).
+    /// </summary>
+    /// <remarks>
+    /// 🔒 ADMIN ONLY, and the same refusal sentence as the write beside it.
+    /// This is not a weaker read than UpdateStatusAsync: knowing that an
+    /// administrator wrote "the certificate looks forged" about a school is
+    /// knowing something the school may not see, so the gate is identical.
+    ///
+    /// ⚠️ NOT GATED ON A PERMISSION CODE but on UserType.Admin, matching the
+    /// write. Splitting them would create a state where somebody can change a
+    /// status and not read why it was last changed, which is the wrong way
+    /// round.
+    /// </remarks>
+    public async Task<IReadOnlyList<UserStatusHistoryItemResponse>> GetStatusHistoryAsync(
+        Guid userUid, ClaimsPrincipal caller, CancellationToken cancellationToken)
+    {
+        if (caller.GetUserType() != UserType.Admin)
+        {
+            throw new ForbiddenException("Only an administrator can read an account's status history.");
+        }
+
+        var (status, items) = await _users.GetUserStatusHistoryAsync(userUid, 50, cancellationToken)
+            .ConfigureAwait(false);
+
+        status.EnsureSuccess();
+
+        return items;
     }
 
     public async Task UnlockAsync(

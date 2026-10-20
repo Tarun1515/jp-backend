@@ -343,6 +343,43 @@ internal sealed class UserRepository : BaseRepository, IUserRepository
         return QuerySingleAsync<UpdateStatusResult>("USP_UpdateUserStatus", p, cancellationToken);
     }
 
+    /// <summary>
+    /// USP_GetUserStatusHistory — a status row, then the rows (G45).
+    /// </summary>
+    public Task<(ProcResult Status, IReadOnlyList<UserStatusHistoryItemResponse> Items)> GetUserStatusHistoryAsync(
+        Guid userUid, int top, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@UserUid", userUid, DbType.Guid);
+        p.Add("@Top", top, DbType.Int32);
+
+        return QueryMultipleAsync<(ProcResult, IReadOnlyList<UserStatusHistoryItemResponse>)>(
+            "USP_GetUserStatusHistory",
+            async grid =>
+            {
+                var status = await grid.ReadFirstOrDefaultAsync<ProcResult>().ConfigureAwait(false)
+                    ?? new ProcResult { Status = 0, Code = ErrorCodes.NotFound, Message = "That account does not exist." };
+
+                /*
+                  ⚠️ THE SECOND RESULT SET ONLY EXISTS ON SUCCESS. The procedure
+                  returns the refusal row alone for an unknown account, and
+                  reading a grid that has no next set throws — so the shape of
+                  the response is decided by the status, not attempted and
+                  caught.
+                */
+                if (status.Status != 1)
+                {
+                    return (status, Array.Empty<UserStatusHistoryItemResponse>());
+                }
+
+                var items = (await grid.ReadAsync<UserStatusHistoryItemResponse>().ConfigureAwait(false)).AsList();
+
+                return (status, (IReadOnlyList<UserStatusHistoryItemResponse>)items);
+            },
+            p,
+            cancellationToken);
+    }
+
     public Task<UnlockResult> UnlockUserAsync(
         Guid userUid, long actionByUserId, string? remarks, CancellationToken cancellationToken)
     {

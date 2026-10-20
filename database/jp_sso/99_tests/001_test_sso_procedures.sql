@@ -819,9 +819,28 @@ INSERT INTO #Perms EXEC dbo.USP_GetPermissionList;
   holders — SUPER_ADMIN and nobody else, because a school verifying its own
   payment is the entire attack.
 */
+/*
+  🔴 A FLOOR, NOT AN EQUALITY — AND THE REASON IS THIS ASSERTION'S OWN HISTORY.
+
+  It read "= 25" and failed in 8A at rows=26, because 7B added a permission and
+  this suite was never run. The number was not wrong when it was written; it
+  rotted, quietly, for two phases.
+
+  ⚠️ WHY IT ROTTED AND WAS NOT CAUGHT: the seven T-SQL suites were documented
+  in HOW_TO_RUN as sqlcmd lines to run by hand and were NOT in run.mjs, so "the
+  regression" never included them. G9 put them in the runner in 8A, which is
+  what surfaced this. A test nobody runs is not a test; it is a note about what
+  used to be true.
+
+  So the shape changes to match the swagger floors: a permission APPEARING is
+  normal and must not fail the suite, a permission VANISHING is a product
+  change that must. The floor moves in the same commit as a deliberate removal,
+  with the reason — which is the rule the API floors already follow.
+*/
 INSERT INTO @Assert (Area, Name, Passed, Detail)
-SELECT 'lists', 'permission catalogue returns all 25',
-       CASE WHEN COUNT(*) = 25 THEN 1 ELSE 0 END, CONCAT('rows=', COUNT(*)) FROM #Perms;
+SELECT 'lists', 'permission catalogue has at least 26 permissions — nothing vanished',
+       CASE WHEN COUNT(*) >= 26 THEN 1 ELSE 0 END,
+       CONCAT('rows=', COUNT(*), ' floor=26') FROM #Perms;
 
 IF OBJECT_ID('tempdb..#RolePerms') IS NOT NULL DROP TABLE #RolePerms;
 CREATE TABLE #RolePerms (PermissionId int, PermissionCode varchar(50), PermissionName nvarchar(150),
@@ -838,20 +857,36 @@ INSERT INTO #RolePerms EXEC dbo.USP_GetRolePermissions @RoleId = @SuperAdminRole
 */
 INSERT INTO @Assert (Area, Name, Passed, Detail)
 /*
-  ⚠️ 24, NOT 25 — AND THE DIVERGENCE IS THE POINT.
+  🔴 THE INVARIANT, NOT THE ARITHMETIC: SUPER_ADMIN HOLDS EVERYTHING EXCEPT
+  BILLING.MANAGE.
 
-  Phase 6.5B added BILLING.MANAGE, so the catalogue is 25. SUPER_ADMIN does
-  NOT hold it: an administrator CONFIRMS payments (PAYMENT.VERIFY) and does not
-  request plan changes on an account's behalf. 007 asserts that closed set.
+  This read "= 24" against a catalogue of 25 and failed in 8A at granted=25
+  against a catalogue of 26 — on a product that was behaving exactly as
+  intended. Both numbers had moved by one and their RELATIONSHIP had not moved
+  at all, which is the thing worth asserting.
 
-  🔴 So this is the first permission in the product that SUPER_ADMIN lacks, and
-  that is deliberate rather than an omission. The two numbers were identical for
-  twenty-four permissions and a reader would reasonably assume they always are
-  — which is exactly why this comment exists beside the 24.
+  ⚠️ BILLING.MANAGE IS WITHHELD ON PURPOSE. An administrator CONFIRMS payments
+  (PAYMENT.VERIFY) and does not request plan changes on an account's behalf.
+  007 asserts that closed set. It is the only permission SUPER_ADMIN lacks, and
+  that is a decision rather than an omission.
+
+  🔴 AND THIS ASSERTION STILL DOES THE JOB THE OLD COMMENT CLAIMED: it catches
+  a permission added to the catalogue and then granted to nobody — a screen
+  that exists and that nobody can open — because such a permission would be
+  ungranted here and is not BILLING.MANAGE. Written as "not granted = exactly
+  {BILLING.MANAGE}", which is stronger than a count and cannot rot.
 */
-SELECT 'lists', 'SUPER_ADMIN holds 24 of the 25 — not BILLING.MANAGE',
-       CASE WHEN SUM(CAST(IsGranted AS int)) = 24 THEN 1 ELSE 0 END,
-       CONCAT('granted=', SUM(CAST(IsGranted AS int))) FROM #RolePerms;
+SELECT 'lists', 'SUPER_ADMIN holds every permission EXCEPT BILLING.MANAGE',
+       CASE WHEN NOT EXISTS (SELECT 1 FROM #RolePerms
+                              WHERE IsGranted = 0 AND PermissionCode <> 'BILLING.MANAGE')
+                 AND EXISTS (SELECT 1 FROM #RolePerms
+                              WHERE IsGranted = 0 AND PermissionCode = 'BILLING.MANAGE')
+            THEN 1 ELSE 0 END,
+       CONCAT('granted=', SUM(CAST(IsGranted AS int)), ' of ', COUNT(*),
+              ' · ungranted: ',
+              ISNULL((SELECT STRING_AGG(PermissionCode, ', ')
+                        FROM #RolePerms WHERE IsGranted = 0), 'none'))
+  FROM #RolePerms;
 
 EXEC dbo.USP_GetRoleList @OrganizationUid = @SchoolOrgUid;   -- smoke
 

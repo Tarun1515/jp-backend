@@ -365,7 +365,45 @@ INSERT INTO @t VALUES ('public', N'…while still returning what a school needs 
 
 -- The contact procedure refuses until the teacher has applied.
 DECLARE @teacherAUid uniqueidentifier = (SELECT TeacherUid FROM dbo.t_app_teachers WHERE TeacherId = @teacherA);
+/*
+  🔴 THE SUITE MAKES ITS OWN SCHOOL — AND A FRESH DATABASE IS WHY.
+
+  This read TOP (1) SchoolId FROM t_app_schools, borrowing whatever school
+  happened to be lying around. On this machine there has been one since 3B, so
+  it worked for seven phases.
+
+  8A built the three databases from run_all.sql onto an EMPTY SQL Server to
+  rehearse what a new machine does, and on that instance t_app_schools is
+  empty: @someSchool came back NULL, USP_GetTeacherContactForSchool quite
+  correctly answered FORBIDDEN rather than CONTACT_LOCKED, and the assertion
+  below reported "🔴 Contact details are LOCKED until the teacher applies —
+  FAIL" on a product whose contact lock was working perfectly.
+
+  ⚠️ THE FAILURE SENTENCE WAS THE PROBLEM, not the failure. It sent the reader
+  to the consent logic — the most security-sensitive code in the system — to
+  look for a bug that was a missing fixture. An assertion with an unstated
+  premise does not fail quietly; it fails in the wrong direction.
+
+  So the school is CREATED here, inside the transaction this whole file runs in
+  and rolls back at the end, and the premise is asserted rather than assumed.
+  The suite now runs on a database that has nothing in it but the build.
+*/
 DECLARE @someSchool bigint = (SELECT TOP (1) SchoolId FROM dbo.t_app_schools WHERE Is_Deleted = 0);
+
+IF @someSchool IS NULL
+BEGIN
+    INSERT INTO dbo.t_app_schools (SchoolName, OrganizationUid, Is_Active, Is_Deleted)
+    VALUES (N'ZZ Test School (rolled back)', NEWID(), 1, 0);
+
+    SET @someSchool = SCOPE_IDENTITY();
+
+    PRINT '  (no school in this database — created a disposable one for the contact tests)';
+END
+
+INSERT INTO @t VALUES ('public', N'premise: a school exists to view a teacher AS',
+    CASE WHEN @someSchool IS NULL THEN N'NO SCHOOL — the contact assertions below would be meaningless'
+         ELSE N'SchoolId ' + CAST(@someSchool AS nvarchar(20)) END,
+    CASE WHEN @someSchool IS NOT NULL THEN 'PASS' ELSE 'FAIL' END);
 
 /*
   ⚠️ FullName JOINED THIS SHAPE IN 6B, AND THIS TEST IS WHAT NOTICED.
