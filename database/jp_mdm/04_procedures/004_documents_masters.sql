@@ -286,10 +286,51 @@ BEGIN
         WHERE Is_Deleted = 0 AND Is_Active = 1 AND (@ParentId IS NULL OR StateId = @ParentId)
         ORDER BY DisplayOrder, Name;
 
-    ELSE IF @MasterCode = 'CITY'
-        SELECT CityId AS Id, Code, Name, DisplayOrder, DistrictId AS ParentId FROM dbo.m_mdm_city
+    /*
+      SR-1. The level between district and city.
+
+      ⚠️ ITS PARENT IS THE DISTRICT, not the city — the cascade is
+      State -> District -> Tehsil -> City, and a tehsil is asked for with the
+      district the user has already picked.
+
+      Sub-tehsils are in this list too, by DisplayOrder (full tehsils first,
+      sub-tehsils from 1000). A person typing their address knows the name of
+      their place, not its revenue classification, and leaving sub-tehsils out
+      would mean a school in Uklana cannot find Uklana.
+    */
+    ELSE IF @MasterCode = 'TEHSIL'
+        SELECT TehsilId AS Id, Code, Name, DisplayOrder, DistrictId AS ParentId FROM dbo.m_mdm_tehsil
         WHERE Is_Deleted = 0 AND Is_Active = 1 AND (@ParentId IS NULL OR DistrictId = @ParentId)
         ORDER BY DisplayOrder, Name;
+
+    /*
+      🔴 CITY IS ASKED FOR BY TEHSIL **OR** BY DISTRICT, AND BOTH ARE REAL.
+
+      The cascade offers tehsil as an OPTIONAL step (ADDRESS_DESIGN §2): a
+      school that knows only its district must still reach a town. So:
+
+        parent is a tehsil  -> the towns of that tehsil
+        parent is a district -> every town in the district
+
+      ⚠️ ONE PARAMETER, TWO MEANINGS, resolved by looking it up rather than by
+      a second parameter the caller has to set correctly. The id ranges do not
+      overlap by accident — they are namespaced per state (012's header) — but
+      this does not rely on that: it checks whether the id EXISTS as a tehsil,
+      which is true or false regardless of how ids are allocated.
+    */
+    ELSE IF @MasterCode = 'CITY'
+    BEGIN
+        IF @ParentId IS NOT NULL
+           AND EXISTS (SELECT 1 FROM dbo.m_mdm_tehsil
+                        WHERE TehsilId = @ParentId AND Is_Deleted = 0)
+            SELECT CityId AS Id, Code, Name, DisplayOrder, TehsilId AS ParentId FROM dbo.m_mdm_city
+            WHERE Is_Deleted = 0 AND Is_Active = 1 AND TehsilId = @ParentId
+            ORDER BY DisplayOrder, Name;
+        ELSE
+            SELECT CityId AS Id, Code, Name, DisplayOrder, DistrictId AS ParentId FROM dbo.m_mdm_city
+            WHERE Is_Deleted = 0 AND Is_Active = 1 AND (@ParentId IS NULL OR DistrictId = @ParentId)
+            ORDER BY DisplayOrder, Name;
+    END
 
     ELSE IF @MasterCode = 'BOARD'
         SELECT BoardId AS Id, Code, Name, DisplayOrder FROM dbo.m_mdm_board

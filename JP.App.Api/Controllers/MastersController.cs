@@ -101,14 +101,51 @@ public sealed class MastersController : ControllerBase
         return Ok(ApiResponse.Success(items));
     }
 
-    /// <summary>Cities in a district. Empty until the dataset arrives — see districts.</summary>
+    /// <summary>
+    /// Tehsils in a district — the optional level between district and town.
+    /// </summary>
+    /// <remarks>
+    /// SR-1. Includes sub-tehsils, flagged in the data but not in this
+    /// response: a person typing an address knows their place's name, not its
+    /// revenue classification, and a list that omitted sub-tehsils would mean
+    /// a school in Uklana cannot find Uklana.
+    ///
+    /// ⚠️ EMPTY FOR EVERY STATE EXCEPT HARYANA TODAY, and that is the same
+    /// correct-degradation contract the districts endpoint has carried since
+    /// 2.47: it answers cleanly with nothing, and the form hides the control.
+    /// </remarks>
+    [HttpGet("tehsils")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Client)]
+    public async Task<ActionResult<Response<IReadOnlyList<MasterItemDto>>>> GetTehsils(
+        [FromQuery] int? districtId,
+        CancellationToken cancellationToken)
+    {
+        var items = await _service.GetAsync("TEHSIL", districtId, cancellationToken).ConfigureAwait(false);
+        return Ok(ApiResponse.Success(items));
+    }
+
+    /// <summary>
+    /// Towns in a tehsil, or in a district when no tehsil was chosen.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 TEHSIL WINS WHEN BOTH ARE SENT, and the reason is the cascade's own
+    /// shape: tehsil is the NARROWER choice the user made most recently. Taking
+    /// the district instead would silently widen a selection they deliberately
+    /// narrowed.
+    ///
+    /// ⚠️ Both are optional because the tehsil step is optional (ADDRESS_DESIGN
+    /// §2). A school that knows only its district must still reach a town.
+    /// </remarks>
     [HttpGet("cities")]
     [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Client)]
     public async Task<ActionResult<Response<IReadOnlyList<MasterItemDto>>>> GetCities(
         [FromQuery] int? districtId,
+        [FromQuery] int? tehsilId,
         CancellationToken cancellationToken)
     {
-        var items = await _service.GetAsync("CITY", districtId, cancellationToken).ConfigureAwait(false);
+        var items = await _service
+            .GetAsync("CITY", tehsilId ?? districtId, cancellationToken).ConfigureAwait(false);
+
         return Ok(ApiResponse.Success(items));
     }
 }

@@ -247,6 +247,10 @@ GO
 :r $(DbRoot)\jp_mdm\01_tables\037_alter_t_mdm_request_payments_manual.sql
 :r $(DbRoot)\jp_mdm\01_tables\038_t_mdm_payment_receipts.sql
 
+-- SR-1. Tehsil master, city.TehsilId, and the registration address columns.
+-- Also widens m_mdm_city.Code, which the Haryana seed proved too narrow.
+:r $(DbRoot)\jp_mdm\01_tables\039_m_mdm_tehsil.sql
+
 -- ---- indexes: access paths only. Business-key uniques live beside their table
 -- ---- in 01_tables, because a business key is part of what the table means
 -- ---- rather than a performance decision.
@@ -277,6 +281,10 @@ GO
 -- 🔴 It also GUARDS that no paid plan has been seeded — 008_seed_plans.sql
 -- forbids that, and this is where the build would catch a leaked fixture.
 :r $(DbRoot)\jp_mdm\03_seed\011_seed_plan_change_request.sql
+
+-- SR-1. Haryana: 23 districts, 143 tehsils, 143 tehsil-headquarters towns.
+-- Closes the data half of G40. Source and date cited in the file header.
+:r $(DbRoot)\jp_mdm\03_seed\012_seed_haryana_geography.sql
 
 -- ---- programmability: IST functions first, then USP_LogError which every
 -- ---- other procedure calls from its CATCH block, then the approval engine.
@@ -396,6 +404,11 @@ GO
 -- Phase 7B. PULLED as a job status, which is what makes a pulled advert
 -- vanish from every read that already requires JobStatusId = 2.
 :r $(DbRoot)\jp_app\01_tables\035_alter_t_app_jobs_pulled_status.sql
+
+-- SR-1. Address columns on schools, branches and teacher preferences —
+-- plus t_app_schools.PrincipalMobile, which registration collected and
+-- provisioning silently dropped (found by SR-0's field matrix).
+:r $(DbRoot)\jp_app\01_tables\036_alter_address_columns.sql
 
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that

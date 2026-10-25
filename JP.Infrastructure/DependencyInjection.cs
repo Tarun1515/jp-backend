@@ -1,5 +1,6 @@
 using Dapper;
 using JP.Infrastructure.Data;
+using JP.Infrastructure.Address;
 using JP.Infrastructure.Email;
 using JP.Infrastructure.Middleware;
 using JP.Infrastructure.Repositories;
@@ -71,6 +72,17 @@ public static class DependencyInjection
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        services.AddOptions<AddressLookupOptions>()
+            .Bind(configuration.GetSection(AddressLookupOptions.SectionName))
+            .ValidateDataAnnotations()
+            .Validate(
+                o => o.Provider is AddressLookupOptions.ProviderNone or AddressLookupOptions.ProviderGoogle,
+                $"{AddressLookupOptions.SectionName}:Provider must be "
+                + $"'{AddressLookupOptions.ProviderNone}' or '{AddressLookupOptions.ProviderGoogle}'. "
+                + "An unrecognised provider fails at startup rather than silently falling back to a "
+                + "default nobody chose.")
+            .ValidateOnStart();
+
         // Stateless and thread-safe, so one instance each.
         services.AddSingleton<IDbConnectionFactory, DbConnectionFactory>();
         services.AddSingleton<IPasswordService, PasswordService>();
@@ -82,6 +94,35 @@ public static class DependencyInjection
         // Scoped: an SMTP client per request keeps one slow send from blocking
         // another, and keeps failures isolated to the request that caused them.
         services.AddScoped<IEmailService, SmtpEmailService>();
+
+        /*
+          🔴 THE PROVIDER IS CHOSEN HERE, ONCE, AND SHIPPED OFF.
+
+          AddressLookup:Provider defaults to None, so a deployment that has not
+          deliberately configured Places gets the manual cascade — which is a
+          supported, verified path, not a degraded one. The first real
+          deployment will not have a key, and it must work.
+
+          ⚠️ THE KEY IS NOT READ HERE. GooglePlacesAddressLookupService reads
+          the environment variable per call, so rotating it needs no restart
+          and a process started without one degrades instead of crashing at
+          startup.
+
+          ⚠️ AddHttpClient, not a new HttpClient per call — a fresh HttpClient
+          per request exhausts sockets under load, and this one sits on a
+          keystroke path.
+        */
+        var addressProvider = configuration
+            .GetSection(AddressLookupOptions.SectionName)[nameof(AddressLookupOptions.Provider)];
+
+        if (string.Equals(addressProvider, AddressLookupOptions.ProviderGoogle, StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddHttpClient<IAddressLookupService, GooglePlacesAddressLookupService>();
+        }
+        else
+        {
+            services.AddScoped<IAddressLookupService, DisabledAddressLookupService>();
+        }
 
         /*
           Email is queued, never sent inline. On the auth endpoints that is a

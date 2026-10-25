@@ -65,13 +65,21 @@ internal static class PublicRateLimiting
     private const string FiltersPath = "/api/public/jobs/filters";
     private const string ContactPath = "/api/public/contact";
 
+    /*
+      SR-2. Address autocomplete, which is anonymous because registration is.
+      Both paths are limited together — see AddressLookupPerIp.
+    */
+    private const string AddressSuggestPath = "/api/address/suggest";
+    private const string AddressResolvePath = "/api/address/resolve";
+
     internal static PartitionedRateLimiter<HttpContext> CreateChained(PublicRateLimitOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
 
         return PartitionedRateLimiter.CreateChained(
             ReadsPerIp(options.PublicReadsPerIp),
-            ContactPerIp(options.ContactPerIp));
+            ContactPerIp(options.ContactPerIp),
+            AddressLookupPerIp(options.AddressLookupPerIp));
     }
 
     /// <summary>
@@ -116,6 +124,41 @@ internal static class PublicRateLimiting
                 : RateLimitPartition.GetFixedWindowLimiter(
                     $"public-contact:{ClientIp(context)}",
                     _ => Options(window)));
+
+    /// <summary>
+    /// Address autocomplete, per IP.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THIS ONE COSTS MONEY PER CALL, which none of the others do. Places
+    /// is billed per request, so an unlimited anonymous endpoint in front of it
+    /// is somebody else's budget with our key on it. That is a different risk
+    /// from scraping and it earns its own window.
+    ///
+    /// ⚠️ ONE BUDGET ACROSS suggest AND resolve, for the reason ReadsPerIp
+    /// gives: what needs limiting is how many provider calls one address can
+    /// cause, and that is the sum of the two.
+    ///
+    /// ⚠️ 30/MINUTE IS GENEROUS ON PURPOSE. Typing an address is bursty — a
+    /// school types, pauses, corrects, picks — and the client already debounces
+    /// and needs two characters before it asks. A limit tight enough to catch
+    /// abuse in one minute would also catch a slow typist on their own address,
+    /// and they are mid-registration.
+    /// </remarks>
+    private static PartitionedRateLimiter<HttpContext> AddressLookupPerIp(RateLimitWindow window) =>
+        PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        {
+            var path = context.Request.Path.Value?.ToLowerInvariant() ?? string.Empty;
+
+            var isLookup =
+                path.Equals(AddressSuggestPath, StringComparison.Ordinal)
+                || path.Equals(AddressResolvePath, StringComparison.Ordinal);
+
+            return !isLookup
+                ? RateLimitPartition.GetNoLimiter("none")
+                : RateLimitPartition.GetFixedWindowLimiter(
+                    $"address-lookup:{ClientIp(context)}",
+                    _ => Options(window));
+        });
 
     private static FixedWindowRateLimiterOptions Options(RateLimitWindow window) => new()
     {
@@ -171,6 +214,12 @@ internal sealed class PublicRateLimitOptions
 
     /// <summary>The contact form, per IP. A person writes once.</summary>
     public RateLimitWindow ContactPerIp { get; set; } = new() { PermitLimit = 3, WindowSeconds = 3600 };
+
+    /// <summary>
+    /// Address autocomplete, per IP — the only endpoint here that costs money
+    /// per call.
+    /// </summary>
+    public RateLimitWindow AddressLookupPerIp { get; set; } = new() { PermitLimit = 30, WindowSeconds = 60 };
 }
 
 /// <summary>One fixed window. Mirrors the SSO API's type of the same name.</summary>
