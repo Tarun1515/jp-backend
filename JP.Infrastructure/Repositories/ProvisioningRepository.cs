@@ -134,6 +134,14 @@ internal sealed class ProvisioningRepository : BaseRepository, IProvisioningRepo
         p.Add("@ContactEmail", detail.ContactEmail, DbType.String, size: 150);
         p.Add("@ContactMobile", detail.ContactMobile, DbType.AnsiString, size: 15);
         p.Add("@PrincipalName", detail.PrincipalName, DbType.String, size: 150);
+        /*
+          🔴 SR-3. PrincipalMobile was collected for nine phases and dropped
+          here — the procedure had no parameter for it, so approval left the
+          number in jp_mdm where no school-facing read looks. PrincipalName
+          WAS carried, which is what made it invisible: the profile showed a
+          principal, just one you could not ring.
+        */
+        p.Add("@PrincipalMobile", detail.PrincipalMobile, DbType.AnsiString, size: 15);
         p.Add("@HrContactName", detail.HrContactName, DbType.String, size: 150);
         p.Add("@HrContactMobile", detail.HrContactMobile, DbType.AnsiString, size: 15);
         p.Add("@AddressLine1", detail.AddressLine1, DbType.String, size: 250);
@@ -142,6 +150,13 @@ internal sealed class ProvisioningRepository : BaseRepository, IProvisioningRepo
         p.Add("@DistrictId", detail.DistrictId, DbType.Int32);
         p.Add("@StateId", detail.StateId, DbType.Int32);
         p.Add("@Pincode", detail.Pincode, DbType.AnsiString, size: 10);
+
+        /* SR-1 address columns — carried across approval like every other field. */
+        p.Add("@TehsilId", detail.TehsilId, DbType.Int32);
+        p.Add("@AreaOrVillage", detail.AreaOrVillage, DbType.String, size: 200);
+        p.Add("@Latitude", detail.Latitude, DbType.Decimal);
+        p.Add("@Longitude", detail.Longitude, DbType.Decimal);
+        p.Add("@GooglePlaceId", detail.GooglePlaceId, DbType.AnsiString, size: 120);
         // 🔴 Not optional. The procedure refuses a NULL plan, because a
         // school provisioned without one is the "no subscription" state the
         // whole design exists to prevent.

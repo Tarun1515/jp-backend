@@ -134,6 +134,13 @@ internal sealed class ApprovalRepository : BaseRepository, IApprovalRepository
         p.Add("@DistrictId", request.DistrictId, DbType.Int32);
         p.Add("@StateId", request.StateId, DbType.Int32);
         p.Add("@Pincode", request.Pincode, DbType.AnsiString, size: 10);
+
+        /* SR-1 address columns — the same five through draft and submit. */
+        p.Add("@TehsilId", request.TehsilId, DbType.Int32);
+        p.Add("@AreaOrVillage", request.AreaOrVillage, DbType.String, size: 200);
+        p.Add("@Latitude", request.Latitude, DbType.Decimal);
+        p.Add("@Longitude", request.Longitude, DbType.Decimal);
+        p.Add("@GooglePlaceId", request.GooglePlaceId, DbType.AnsiString, size: 120);
         p.Add("@PrincipalName", request.PrincipalName, DbType.String, size: 150);
         p.Add("@PrincipalMobile", request.PrincipalMobile, DbType.AnsiString, size: 15);
         p.Add("@HrContactName", request.HrContactName, DbType.String, size: 150);
@@ -368,6 +375,13 @@ internal sealed class ApprovalRepository : BaseRepository, IApprovalRepository
         p.Add("@DistrictId", request.DistrictId, DbType.Int32);
         p.Add("@StateId", request.StateId, DbType.Int32);
         p.Add("@Pincode", request.Pincode, DbType.AnsiString, size: 10);
+
+        /* SR-1 address columns — the same five through draft and submit. */
+        p.Add("@TehsilId", request.TehsilId, DbType.Int32);
+        p.Add("@AreaOrVillage", request.AreaOrVillage, DbType.String, size: 200);
+        p.Add("@Latitude", request.Latitude, DbType.Decimal);
+        p.Add("@Longitude", request.Longitude, DbType.Decimal);
+        p.Add("@GooglePlaceId", request.GooglePlaceId, DbType.AnsiString, size: 120);
         p.Add("@PrincipalName", request.PrincipalName, DbType.String, size: 150);
         p.Add("@PrincipalMobile", request.PrincipalMobile, DbType.AnsiString, size: 15);
         p.Add("@HrContactName", request.HrContactName, DbType.String, size: 150);

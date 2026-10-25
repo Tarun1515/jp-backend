@@ -81,6 +81,17 @@ CREATE OR ALTER PROCEDURE dbo.USP_SubmitApprovalRequest
     @DistrictId         int            = NULL,
     @StateId            int            = NULL,
     @Pincode            varchar(10)    = NULL,
+
+    /*
+      SR-1's address columns. All nullable: tehsil and area are optional by
+      design (ADDRESS_DESIGN §2), and the coordinates only exist when the
+      address came through Places.
+    */
+    @TehsilId           int            = NULL,
+    @AreaOrVillage      nvarchar(200)  = NULL,
+    @Latitude           decimal(9, 6)  = NULL,
+    @Longitude          decimal(9, 6)  = NULL,
+    @GooglePlaceId      varchar(120)   = NULL,
     @PrincipalName      nvarchar(150)  = NULL,
     @PrincipalMobile    varchar(15)    = NULL,
     @HrContactName      nvarchar(150)  = NULL,
@@ -232,12 +243,14 @@ BEGIN
                     (RequestId, SchoolName, SchoolTypeId, BoardId, AffiliationNumber,
                      RegistrationNo, PanNumber, LogoPath, GroupType, EstablishedYear,
                      AddressLine1, AddressLine2, CityId, DistrictId, StateId, Pincode,
+                     TehsilId, AreaOrVillage, Latitude, Longitude, GooglePlaceId,
                      PrincipalName, PrincipalMobile, HrContactName, HrContactMobile,
                      ContactEmail, ContactMobile, Website, AboutSchool, CreatedBy)
                 VALUES
                     (@Id, @SchoolName, @SchoolTypeId, @BoardId, @AffiliationNumber,
                      @RegistrationNo, @PanNumber, @LogoPath, @GroupType, @EstablishedYear,
                      @AddressLine1, @AddressLine2, @CityId, @DistrictId, @StateId, @Pincode,
+                     @TehsilId, @AreaOrVillage, @Latitude, @Longitude, @GooglePlaceId,
                      @PrincipalName, @PrincipalMobile, @HrContactName, @HrContactMobile,
                      @ContactEmail, @ContactMobile, @Website, @AboutSchool, @RequestorUserId);
             END

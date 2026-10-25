@@ -57,7 +57,33 @@ CREATE OR ALTER PROCEDURE dbo.USP_ProvisionSchoolFromApproval
     @ContactEmail       nvarchar(150)  = NULL,
     @ContactMobile      varchar(15)    = NULL,
     @PrincipalName      nvarchar(150)  = NULL,
+
+    /*
+      🔴 ADDED IN SR-3, AND IT WAS COLLECTED FOR NINE PHASES BEFORE THIS.
+
+      Registration asks for the principal's mobile, USP_SaveSchoolDraft stores
+      it, USP_SubmitApprovalRequest carries it into
+      t_mdm_school_registration_details — and this procedure did not have the
+      parameter. So approval dropped it: the number stayed in jp_mdm, where no
+      school-facing read ever looks, and a school approved last month had a
+      principal nobody could ring.
+
+      ⚠️ PrincipalName WAS carried across, which is what made this invisible —
+      the principal's details looked present on the profile because the name
+      was there.
+
+      Found by SR-0's field matrix, which went field by field rather than
+      looking for a bug. Nothing reported it because nothing looked.
+    */
+    @PrincipalMobile    varchar(15)    = NULL,
     @HrContactName      nvarchar(150)  = NULL,
+
+    /* SR-1's address columns, carried across approval like every other field. */
+    @TehsilId           int            = NULL,
+    @AreaOrVillage      nvarchar(200)  = NULL,
+    @Latitude           decimal(9, 6)  = NULL,
+    @Longitude          decimal(9, 6)  = NULL,
+    @GooglePlaceId      varchar(120)   = NULL,
     @HrContactMobile    varchar(15)    = NULL,
     @AddressLine1       nvarchar(250)  = NULL,
     @AddressLine2       nvarchar(250)  = NULL,
@@ -151,15 +177,17 @@ BEGIN
                 (OrganizationUid, SourceRequestUid, SchoolName, SchoolTypeId, BoardId,
                  AffiliationNumber, RegistrationNo, PanNumber, LogoPath, GroupType, EstablishedYear,
                  AboutSchool, Website, ContactEmail, ContactMobile,
-                 PrincipalName, HrContactName, HrContactMobile,
+                 PrincipalName, PrincipalMobile, HrContactName, HrContactMobile,
                  AddressLine1, AddressLine2, CityId, DistrictId, StateId, Pincode,
+                 TehsilId, AreaOrVillage, Latitude, Longitude, GooglePlaceId,
                  IsVerified, VerifiedOn, VerifiedByUserId, CreatedBy)
             VALUES
                 (@OrganizationUid, @SourceRequestUid, @SchoolName, @SchoolTypeId, @BoardId,
                  @AffiliationNumber, @RegistrationNo, @PanNumber, @LogoPath, @GroupType, @EstablishedYear,
                  @AboutSchool, @Website, @ContactEmail, @ContactMobile,
-                 @PrincipalName, @HrContactName, @HrContactMobile,
+                 @PrincipalName, @PrincipalMobile, @HrContactName, @HrContactMobile,
                  @AddressLine1, @AddressLine2, @CityId, @DistrictId, @StateId, @Pincode,
+                 @TehsilId, @AreaOrVillage, @Latitude, @Longitude, @GooglePlaceId,
                  1, @Now, @VerifiedByUserId, @VerifiedByUserId);
 
             SET @Id = SCOPE_IDENTITY();

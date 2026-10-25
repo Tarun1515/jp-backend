@@ -50,6 +50,13 @@ public sealed record SubmitApprovalRequest
     public int? StateId { get; init; }
 
     public string? Pincode { get; init; }
+
+    /* SR-1 address columns. Nullable: an address captured before SR-1 has none. */
+    public int? TehsilId { get; init; }
+    public string? AreaOrVillage { get; init; }
+    public decimal? Latitude { get; init; }
+    public decimal? Longitude { get; init; }
+    public string? GooglePlaceId { get; init; }
     public string? PrincipalName { get; init; }
     public string? PrincipalMobile { get; init; }
     public string? HrContactName { get; init; }
@@ -110,6 +117,13 @@ public sealed record SaveDraftRequest
     public int? DistrictId { get; init; }
     public int? StateId { get; init; }
     public string? Pincode { get; init; }
+
+    /* SR-1 address columns. Nullable: an address captured before SR-1 has none. */
+    public int? TehsilId { get; init; }
+    public string? AreaOrVillage { get; init; }
+    public decimal? Latitude { get; init; }
+    public decimal? Longitude { get; init; }
+    public string? GooglePlaceId { get; init; }
     public string? PrincipalName { get; init; }
     public string? PrincipalMobile { get; init; }
     public string? HrContactName { get; init; }
@@ -257,6 +271,13 @@ public sealed record SchoolRegistrationDetailDto
     public int? DistrictId { get; init; }
     public int? StateId { get; init; }
     public string? Pincode { get; init; }
+
+    /* SR-1 address columns. Nullable: an address captured before SR-1 has none. */
+    public int? TehsilId { get; init; }
+    public string? AreaOrVillage { get; init; }
+    public decimal? Latitude { get; init; }
+    public decimal? Longitude { get; init; }
+    public string? GooglePlaceId { get; init; }
     public string? PrincipalName { get; init; }
     public string? PrincipalMobile { get; init; }
     public string? HrContactName { get; init; }
