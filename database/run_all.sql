@@ -282,6 +282,11 @@ GO
 -- forbids that, and this is where the build would catch a leaked fixture.
 :r $(DbRoot)\jp_mdm\03_seed\011_seed_plan_change_request.sql
 
+-- SR-4. The three school plans, their gating flips and the eight mappings.
+-- 🔴 AFTER 011, because 011 asserts the catalogue is exactly this set — it
+--    has to run against a catalogue that already exists.
+:r $(DbRoot)\jp_mdm\03_seed\013_seed_school_plans.sql
+
 -- SR-1. Haryana: 23 districts, 143 tehsils, 143 tehsil-headquarters towns.
 -- Closes the data half of G40. Source and date cited in the file header.
 :r $(DbRoot)\jp_mdm\03_seed\012_seed_haryana_geography.sql

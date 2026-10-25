@@ -140,15 +140,59 @@ GO
   finally, so a clean database has none; a fixture left behind by a killed run
   shows up here as a loud build failure, which is the correct outcome.
 */
-IF EXISTS (SELECT 1 FROM dbo.m_mdm_plans
-           WHERE Price > 0 AND IsPublic = 1 AND IsDefault = 0 AND Is_Deleted = 0)
-BEGIN
-    DECLARE @leaked nvarchar(400) =
-        (SELECT STRING_AGG(PlanCode, ', ')
-           FROM dbo.m_mdm_plans
-          WHERE Price > 0 AND IsPublic = 1 AND IsDefault = 0 AND Is_Deleted = 0);
+/*
+  🔴 THIS GUARD CHANGED SHAPE IN SR-4, IT DID NOT GO AWAY.
 
-    RAISERROR('011_seed_plan_change_request: a PRICED PUBLIC plan exists (%s). 008_seed_plans.sql forbids seeding paid tiers — pricing is not finalised and a number we ship gets quoted back. If this is a suite fixture, the suite did not clean up.', 16, 1, @leaked);
+  Until 2026-10-25 it read: "a PRICED PUBLIC plan exists" -> fail. That was
+  right for as long as pricing was unknown, and 008_seed_plans.sql said why —
+  a number we ship is a number that gets quoted back at us.
+
+  The client gave prices on 2026-10-20, so the thing being guarded is no
+  longer "no prices". It is what it always actually was: **no price nobody
+  approved**. So the rule becomes a closed set — the catalogue is EXACTLY the
+  plans 013_seed_school_plans.sql seeds, and anything else fails the build.
+
+  ⚠️ THAT IS A STRICTER GUARD THAN THE OLD ONE, not a weaker one. The old
+  rule allowed any number of FREE plans to appear unnoticed; this one fails on
+  an unexpected plan of any price, including a suite fixture that did not
+  clean up — which is the case 011 has caught before and must keep catching.
+
+  ⚠️ AND IT STILL CATCHES THE ORIGINAL RISK. A paid tier invented by somebody
+  mid-phase is not in the list below, so it fails exactly as it used to.
+*/
+DECLARE @expected TABLE (PlanCode varchar(30) PRIMARY KEY);
+
+INSERT INTO @expected (PlanCode) VALUES
+    ('SCHOOL_FREE'), ('SCHOOL_STANDARD'), ('SCHOOL_UNLIMITED'), ('TEACHER_FREE');
+
+DECLARE @unexpected nvarchar(600) =
+    (SELECT STRING_AGG(p.PlanCode, ', ')
+       FROM dbo.m_mdm_plans p
+      WHERE p.Is_Deleted = 0
+        AND NOT EXISTS (SELECT 1 FROM @expected e WHERE e.PlanCode = p.PlanCode));
+
+DECLARE @missing nvarchar(600) =
+    (SELECT STRING_AGG(e.PlanCode, ', ')
+       FROM @expected e
+      WHERE NOT EXISTS (SELECT 1 FROM dbo.m_mdm_plans p
+                         WHERE p.PlanCode = e.PlanCode AND p.Is_Deleted = 0));
+
+IF ISNULL(@unexpected, N'') <> N''
+BEGIN
+    DECLARE @m1 nvarchar(1200) =
+        N'011_seed_plan_change_request: AN UNEXPECTED PLAN EXISTS: ' + @unexpected
+        + N'. The catalogue is a closed set of four (013_seed_school_plans.sql). A plan that is not in that file is either a price nobody approved — the thing this guard has always existed to stop — or a suite fixture that did not clean up. If it is a real new tier, add it to 013 AND to this list, in the same commit, with the client''s written price.';
+
+    RAISERROR('%s', 16, 1, @m1);
+END
+
+IF ISNULL(@missing, N'') <> N''
+BEGIN
+    DECLARE @m2 nvarchar(1200) =
+        N'011_seed_plan_change_request: A PLAN THE CATALOGUE PROMISES IS MISSING: ' + @missing
+        + N'. 013_seed_school_plans.sql seeds four plans and this build has fewer. A school choosing a plan that does not exist gets an error nobody can explain.';
+
+    RAISERROR('%s', 16, 1, @m2);
 END
 GO
 
