@@ -22,10 +22,52 @@ namespace JP.App.Api.Controllers;
 public sealed class ApprovalsController : ControllerBase
 {
     private readonly IApprovalService _approvals;
+    private readonly ISchoolProfileService _schoolProfiles;
 
-    public ApprovalsController(IApprovalService approvals)
+    public ApprovalsController(IApprovalService approvals, ISchoolProfileService schoolProfiles)
     {
         _approvals = approvals;
+        _schoolProfiles = schoolProfiles;
+    }
+
+    /// <summary>
+    /// Uploads a school logo or photo during registration.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 SR-3. Registration happens before a school exists, so the profile's
+    /// logo endpoint cannot be used — that one resolves a SchoolId from the
+    /// caller. The column it writes, t_app_schools.LogoPath, has existed since
+    /// Phase 3 with NO producer: nothing ever asked for a logo, so every
+    /// school page showed a blank where one should be.
+    ///
+    /// ⚠️ THE SAME VALIDATOR AS EVERY OTHER UPLOAD (2.48): extension, magic
+    /// bytes, size, generated storage name. Two upload paths means one of them
+    /// eventually skips a check, and the one that skips is the one nobody
+    /// remembers writing.
+    ///
+    /// ⚠️ IT RETURNS THE PATH AND SAVES NOTHING. The draft is the single
+    /// source of truth for a registration (2.50), so the client sends this
+    /// back on the next draft save alongside everything else it typed. Writing
+    /// it here would make two writers for one fact.
+    /// </remarks>
+    [HttpPost("draft/logo")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> SaveDraftLogo(IFormFile file, CancellationToken cancellationToken)
+    {
+        if (file is null || file.Length == 0)
+        {
+            return BadRequest(ApiResponse.Failure("Choose an image to upload."));
+        }
+
+        await using var stream = file.OpenReadStream();
+
+        var path = await _schoolProfiles
+            .StoreRegistrationLogoAsync(stream, file.FileName, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success<object>(new { logoPath = path }, "Image uploaded."));
     }
 
     /// <summary>Submit a request for approval.</summary>

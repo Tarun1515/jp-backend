@@ -20,6 +20,9 @@ public interface ISchoolProfileService
 
     Task SaveLogoAsync(Stream content, string fileName, ClaimsPrincipal caller, CancellationToken cancellationToken);
 
+    /// <summary>A logo uploaded during registration, before a school exists (SR-3).</summary>
+    Task<string> StoreRegistrationLogoAsync(Stream content, string fileName, CancellationToken cancellationToken);
+
     Task<long> AddPhotoAsync(Stream content, string fileName, long? branchId, string? caption, ClaimsPrincipal caller, CancellationToken cancellationToken);
 
     Task ReorderPhotosAsync(ReorderPhotosRequest request, ClaimsPrincipal caller, CancellationToken cancellationToken);
@@ -235,6 +238,31 @@ internal sealed class SchoolProfileService : ISchoolProfileService
 
         result.EnsureSuccess();
     }
+
+    /// <summary>
+    /// Stores a logo for a REGISTRATION, before any school exists.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 SR-3. The client asked for a logo at registration, and the product
+    /// had nowhere to put one: t_app_schools.LogoPath existed and nothing ever
+    /// wrote it, because SaveLogoAsync resolves a SchoolId from the caller —
+    /// and during registration there is no school yet. So the column had no
+    /// producer and every school page showed a blank.
+    ///
+    /// ⚠️ THE SAME StoreImageAsync EVERY OTHER UPLOAD USES (2.48): extension,
+    /// magic bytes, size, generated storage name. Two upload paths means one
+    /// of them eventually skips a check, and the one that skips is the one
+    /// nobody remembers writing.
+    ///
+    /// ⚠️ IT RETURNS THE PATH RATHER THAN SAVING IT ANYWHERE. The draft is the
+    /// source of truth for a registration (2.50), so the client sends this
+    /// path back on the next draft save, alongside everything else it typed.
+    /// Writing it here would create a second writer for the same fact.
+    /// </remarks>
+    public async Task<string> StoreRegistrationLogoAsync(
+        Stream content, string fileName, CancellationToken cancellationToken)
+        => await StoreImageAsync(content, fileName, "school-logos", cancellationToken)
+            .ConfigureAwait(false);
 
     public async Task<long> AddPhotoAsync(
         Stream content, string fileName, long? branchId, string? caption,
