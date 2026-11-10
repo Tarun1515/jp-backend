@@ -154,6 +154,72 @@ public sealed class PlanChangeRequestedDto
     public decimal PriceQuoted { get; set; }
 }
 
+/// <summary>
+/// 🔴 SR-4. The account's own open plan change — "you asked for this, you have
+/// not paid for it yet, and here is how".
+/// </summary>
+/// <remarks>
+/// <para>
+/// 🔴 WHY THE PRODUCT NEEDS A READ FOR THIS AT ALL. Until SR-4 the only way an
+/// account could acquire a pending request was to press the button itself, so
+/// the screen could describe it from the POST's own response. Registration can
+/// create one now, which means the FIRST time a school sees its pending request
+/// is a login days later, on another device, with no response to remember.
+/// </para>
+/// <para>
+/// 🔴 WHAT IS DELIBERATELY ABSENT: any entitlement, quota, allowance or
+/// subscription field. A pending request grants nothing, and a shape that
+/// carried capability beside an unpaid intention is how a screen comes to imply
+/// a school has bought something it has not. The account's real plan is
+/// <c>CurrentPlanDto</c>, and on this path it is the free one.
+/// </para>
+/// </remarks>
+public sealed class OpenPlanChangeDto
+{
+    public long RequestId { get; set; }
+
+    /// <summary>The reference a school quotes when it rings about the money (2.46).</summary>
+    public string RequestNo { get; set; } = string.Empty;
+
+    public DateTime SubmittedOn { get; set; }
+
+    public long PaymentId { get; set; }
+
+    public Guid PaymentUid { get; set; }
+
+    public int PlanId { get; set; }
+
+    public string PlanCode { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 🔴 THE NAME AS THE CATALOGUE HOLDS IT, NOT A TIDIED VERSION.
+    /// </summary>
+    /// <remarks>
+    /// While the figures are placeholders every paid plan is named
+    /// "Standard (SAMPLE PRICING)" — 013_seed_school_plans.sql puts the marker
+    /// in the NAME because a customer reads the name and nobody reads the seed
+    /// file's comment, and a build guard fails if it disappears while the
+    /// prices are still dummy. Shortening it on the way through here would
+    /// defeat that guard from outside the database.
+    /// </remarks>
+    public string PlanName { get; set; } = string.Empty;
+
+    public int? DurationDays { get; set; }
+
+    /// <summary>What was AGREED, not what the catalogue says today (2.7).</summary>
+    public decimal? PriceQuoted { get; set; }
+
+    /// <summary>
+    /// What is RECORDED against the payment — still the expected figure while
+    /// it is pending; an admin replaces it with what actually arrived (6.5-B).
+    /// </summary>
+    public decimal Amount { get; set; }
+
+    public int PaymentModeId { get; set; }
+
+    public string PaymentModeName { get; set; } = string.Empty;
+}
+
 /// <summary>One row of the admin queue.</summary>
 public sealed class PendingPaymentDto
 {

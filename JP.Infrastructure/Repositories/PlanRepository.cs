@@ -23,6 +23,27 @@ internal interface IPlanRepository
 
     /// <summary>One plan, by the id a subscription row stores (3I).</summary>
     Task<PlanRow?> GetByIdAsync(int planId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// 🔴 SR-4. One plan, by the CODE a registration draft recorded (2.47).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Registration stores the plan a school asked for as a code, because a
+    /// draft outlives any surrogate id. At approval the API has to turn that
+    /// into the <c>PlanId</c> <c>USP_RequestPlanChange</c> takes — and the
+    /// other half of provisioning is in jp_app, which cannot see the plan
+    /// catalogue (2.2). So the id is read here and PASSED, which is exactly
+    /// what <see cref="GetDefaultPlanAsync"/> has always done.
+    /// </para>
+    /// <para>
+    /// 🔴 Null is a MEANINGFUL answer, not just an absence: the code is
+    /// unknown, private, or belonged to a plan that has since been withdrawn.
+    /// The caller must not open a pending payment for a tier that no longer
+    /// exists, and must not fail an approval over it either.
+    /// </para>
+    /// </remarks>
+    Task<PlanRow?> GetByCodeAsync(string planCode, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -63,5 +84,16 @@ internal sealed class PlanRepository : BaseRepository, IPlanRepository
         p.Add("@PlanId", planId, DbType.Int32);
 
         return QueryFirstOrDefaultAsync<PlanRow>("USP_GetPlanById", p, cancellationToken);
+    }
+
+    public Task<PlanRow?> GetByCodeAsync(string planCode, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+
+        // AnsiString, size 30 — m_mdm_plans.PlanCode is varchar(30), and
+        // nvarchar here would make the lookup a conversion on every call.
+        p.Add("@PlanCode", planCode, DbType.AnsiString, size: 30);
+
+        return QueryFirstOrDefaultAsync<PlanRow>("USP_GetPlanByCode", p, cancellationToken);
     }
 }

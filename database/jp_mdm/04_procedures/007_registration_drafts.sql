@@ -39,6 +39,22 @@
   is allocated at submit — the moment the request actually exists as far as
   anybody outside is concerned.
 
+  ---------------------------------------------------------------------------
+  🔴 THE DRAFT ALSO CARRIES THE PLAN THE SCHOOL ASKED FOR, AND NOTHING ELSE
+  ---------------------------------------------------------------------------
+  RequestedPlanCode (041) is saved with the rest of the form. It grants
+  nothing: the account is provisioned on the DEFAULT plan exactly as before,
+  and a paid choice becomes a PENDING PLAN_CHANGE request through
+  USP_RequestPlanChange — the machinery 011_seed_plan_change_request.sql
+  configured, not a second mechanism beside it.
+
+  ⚠️ SUBMIT DOES NOT RE-VALIDATE THE PLAN, deliberately. A plan withdrawn
+  between draft and submit must not block a registration: the plan is a
+  commercial preference and the registration is the school's application to
+  exist on the platform. An unresolvable code is handled at provisioning —
+  the school is still created, still on Free, and the orchestration logs it
+  loudly rather than inventing a request for a plan that is gone.
+
   Target: SQL Server 2019 (15.0).
 ==============================================================================*/
 
@@ -117,7 +133,25 @@ CREATE OR ALTER PROCEDURE dbo.USP_SaveSchoolRegistrationDraft
     @ContactEmail       nvarchar(150)  = NULL,
     @ContactMobile      varchar(15)    = NULL,
     @Website            nvarchar(255)  = NULL,
-    @AboutSchool        nvarchar(max)  = NULL
+    @AboutSchool        nvarchar(max)  = NULL,
+
+    /*
+      🔴 THE PLAN THE SCHOOL ASKED FOR. A PREFERENCE, NOT A PURCHASE.
+
+      041_alter_school_registration_requested_plan.sql has the long version.
+      The short one: this is carried on the draft, it grants nothing, and the
+      account still starts on the default plan when it is approved. A paid
+      choice becomes a PENDING PLAN_CHANGE request at provisioning, through
+      USP_RequestPlanChange — the mechanism 011_seed_plan_change_request.sql
+      configured. There is no second path.
+
+      ⚠️ A CODE, never an id (2.47). The API resolves it to an id at the one
+      moment an id is needed.
+
+      ⚠️ NULL is a real value and means "not asked, or not answered yet" —
+      which is NOT the same as 'SCHOOL_FREE', meaning "asked, chose free".
+    */
+    @RequestedPlanCode  varchar(30)    = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -129,8 +163,41 @@ BEGIN
 
     DECLARE @DRAFT_STATUS int = 8, @SCHOOL_REG int = 1;
 
+    /* m_sso_user_types. School — the only user type this form registers. */
+    DECLARE @USER_TYPE_SCHOOL int = 2;
+
     IF @RequestorUserId IS NULL
         SELECT @Code = 'VALIDATION_FAILED', @Message = N'The requestor is required.';
+
+    /*
+      🔴 AN UNKNOWN PLAN CODE IS REFUSED HERE, BECAUSE THERE IS NO FK TO DO IT.
+
+      m_mdm_plans.PlanCode is unique through a FILTERED index, which SQL Server
+      will not let a foreign key reference (see 041's header). So the rule lives
+      in one named place rather than nowhere.
+
+      ⚠️ REFUSED, not quietly nulled. Silently dropping a field registration
+      collected is precisely what SR-0 found USP_ProvisionSchoolFromApproval
+      doing with PrincipalMobile — the school typed something, the software
+      agreed, and the value was gone. A loud refusal is recoverable; a silent
+      one is not.
+
+      ⚠️ Scoped to SCHOOL and to IsPublic: a school cannot register itself onto
+      a teacher plan or onto a private one by sending its code, and the only
+      codes a legitimate client can send are the ones USP_GetPlanCatalog gave
+      it. Is_Active is checked too — a withdrawn plan is not something new
+      accounts may still join.
+    */
+    IF @Code IS NULL AND @RequestedPlanCode IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM dbo.m_mdm_plans p
+                        WHERE p.PlanCode   = @RequestedPlanCode
+                          AND p.UserTypeId = @USER_TYPE_SCHOOL
+                          AND p.IsPublic   = 1
+                          AND p.Is_Active  = 1
+                          AND p.Is_Deleted = 0)
+        SELECT @Code = 'INVALID_PLAN',
+               @Message = N'That plan is not one a school can register on. '
+                        + N'Reload the form and choose again — your other answers are saved.';
 
     /*
       🔴 A school that already has a request in flight must not start a second
@@ -182,14 +249,16 @@ BEGIN
                      AddressLine1, AddressLine2, CityId, DistrictId, StateId, Pincode,
                      TehsilId, AreaOrVillage, Latitude, Longitude, GooglePlaceId,
                      PrincipalName, PrincipalMobile, HrContactName, HrContactMobile,
-                     ContactEmail, ContactMobile, Website, AboutSchool, CreatedBy)
+                     ContactEmail, ContactMobile, Website, AboutSchool,
+                     RequestedPlanCode, CreatedBy)
                 VALUES
                     (@Id, ISNULL(@SchoolName, N''), @SchoolTypeId, @BoardId, @AffiliationNumber,
                      @RegistrationNo, @PanNumber, @LogoPath, @GroupType, @EstablishedYear,
                      @AddressLine1, @AddressLine2, @CityId, @DistrictId, @StateId, @Pincode,
                      @TehsilId, @AreaOrVillage, @Latitude, @Longitude, @GooglePlaceId,
                      @PrincipalName, @PrincipalMobile, @HrContactName, @HrContactMobile,
-                     @ContactEmail, @ContactMobile, @Website, @AboutSchool, @RequestorUserId);
+                     @ContactEmail, @ContactMobile, @Website, @AboutSchool,
+                     @RequestedPlanCode, @RequestorUserId);
             END
             ELSE
             BEGIN
@@ -229,6 +298,16 @@ BEGIN
                        ContactMobile     = @ContactMobile,
                        Website           = @Website,
                        AboutSchool       = @AboutSchool,
+
+                       /*
+                         ⚠️ Overwritten like every other field, including back
+                         to NULL. The client sends the whole form on every
+                         save, and a school that changes its mind from Standard
+                         to Free must actually end up on Free — a COALESCE here
+                         would make the paid choice unretractable, which is the
+                         single most dishonest thing this feature could do.
+                       */
+                       RequestedPlanCode = @RequestedPlanCode,
                        ModifiedOn        = @Now,
                        ModifiedBy        = @RequestorUserId
                  WHERE RequestId = @Id;

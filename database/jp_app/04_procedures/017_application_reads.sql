@@ -572,7 +572,28 @@ CREATE OR ALTER PROCEDURE dbo.USP_BrowseJobs
     @StateId           int              = NULL,
     @MinSalary         decimal(18, 2)   = NULL,
     @PageNumber        int              = 1,
-    @PageSize          int              = 20
+    @PageSize          int              = 20,
+
+    /*--------------------------------------------------------------------------
+      SR-5. THE TEACHER'S OWN SUBJECTS AND CLASS LEVELS, AS SETS.
+
+      The client asked that a teacher opening the job list sees work matching
+      THEIR subjects and THEIR class levels — plural in both cases. A maths and
+      physics teacher of classes 9-12 teaches two subjects and four levels, and
+      the singular @SubjectId above can only ever express one of them.
+
+      ⚠️ ADDED, NOT REPLACED. @SubjectId stays exactly as it was, because the
+      manual single-subject filter and every existing caller still use it, and
+      changing a parameter's meaning under callers that pass it is how a read
+      starts answering a different question than the one asked.
+
+      ⚠️ A READONLY TABLE PARAMETER MAY BE OMITTED ENTIRELY — SQL Server gives
+      the procedure an empty table. So every existing caller keeps working
+      untouched, and "empty" and "not filtering" are the same state, which is
+      what the NOT EXISTS below relies on.
+    --------------------------------------------------------------------------*/
+    @SubjectIds        dbo.IntIdList    READONLY,
+    @ClassLevelIds     dbo.IntIdList    READONLY
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -649,6 +670,25 @@ BEGIN
       AND (@SubjectId        IS NULL OR j.SubjectId        = @SubjectId
            OR EXISTS (SELECT 1 FROM dbo.t_app_job_subjects js
                       WHERE js.JobId = j.JobId AND js.SubjectId = @SubjectId AND js.Is_Deleted = 0))
+      /*
+        SR-5. The teacher's subjects and class levels as SETS. An empty table
+        means "not filtering", which is also what an omitted READONLY parameter
+        gives us — so existing callers are unaffected.
+
+        ⚠️ SUBJECTS MATCH THE PRIMARY COLUMN **OR** THE BRIDGE, exactly as the
+        singular filter above does. A job carries one primary subject and a set
+        of others; matching only the column would hide a physics job from a
+        physics teacher because physics was listed second.
+      */
+      AND (NOT EXISTS (SELECT 1 FROM @SubjectIds)
+           OR j.SubjectId IN (SELECT Id FROM @SubjectIds)
+           OR EXISTS (SELECT 1 FROM dbo.t_app_job_subjects js
+                      WHERE js.JobId = j.JobId AND js.Is_Deleted = 0
+                        AND js.SubjectId IN (SELECT Id FROM @SubjectIds)))
+      AND (NOT EXISTS (SELECT 1 FROM @ClassLevelIds)
+           OR EXISTS (SELECT 1 FROM dbo.t_app_job_class_levels jc
+                      WHERE jc.JobId = j.JobId AND jc.Is_Deleted = 0
+                        AND jc.ClassLevelId IN (SELECT Id FROM @ClassLevelIds)))
       AND (@DesignationId    IS NULL OR j.DesignationId    = @DesignationId)
       AND (@EmploymentTypeId IS NULL OR j.EmploymentTypeId = @EmploymentTypeId)
       AND (@CityId           IS NULL OR j.CityId           = @CityId)
@@ -678,6 +718,25 @@ BEGIN
       AND (@SubjectId        IS NULL OR j.SubjectId        = @SubjectId
            OR EXISTS (SELECT 1 FROM dbo.t_app_job_subjects js
                       WHERE js.JobId = j.JobId AND js.SubjectId = @SubjectId AND js.Is_Deleted = 0))
+      /*
+        SR-5. The teacher's subjects and class levels as SETS. An empty table
+        means "not filtering", which is also what an omitted READONLY parameter
+        gives us — so existing callers are unaffected.
+
+        ⚠️ SUBJECTS MATCH THE PRIMARY COLUMN **OR** THE BRIDGE, exactly as the
+        singular filter above does. A job carries one primary subject and a set
+        of others; matching only the column would hide a physics job from a
+        physics teacher because physics was listed second.
+      */
+      AND (NOT EXISTS (SELECT 1 FROM @SubjectIds)
+           OR j.SubjectId IN (SELECT Id FROM @SubjectIds)
+           OR EXISTS (SELECT 1 FROM dbo.t_app_job_subjects js
+                      WHERE js.JobId = j.JobId AND js.Is_Deleted = 0
+                        AND js.SubjectId IN (SELECT Id FROM @SubjectIds)))
+      AND (NOT EXISTS (SELECT 1 FROM @ClassLevelIds)
+           OR EXISTS (SELECT 1 FROM dbo.t_app_job_class_levels jc
+                      WHERE jc.JobId = j.JobId AND jc.Is_Deleted = 0
+                        AND jc.ClassLevelId IN (SELECT Id FROM @ClassLevelIds)))
       AND (@DesignationId    IS NULL OR j.DesignationId    = @DesignationId)
       AND (@EmploymentTypeId IS NULL OR j.EmploymentTypeId = @EmploymentTypeId)
       AND (@CityId           IS NULL OR j.CityId           = @CityId)

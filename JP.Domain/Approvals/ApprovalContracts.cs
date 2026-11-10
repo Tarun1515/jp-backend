@@ -132,6 +132,31 @@ public sealed record SaveDraftRequest
     public string? ContactMobile { get; init; }
     public string? Website { get; init; }
     public string? AboutSchool { get; init; }
+
+    /// <summary>
+    /// 🔴 SR-4. The plan the school ASKED FOR. A preference, not a purchase.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A CODE and never an id (2.47). A draft lives for days — the form is
+    /// started at a desk and finished on a phone — and <c>PlanId</c> is a
+    /// surrogate a rebuilt database renumbers, while <c>SCHOOL_STANDARD</c> is
+    /// the value every seed file and build guard keys on.
+    /// </para>
+    /// <para>
+    /// 🔴 CHOOSING A PAID PLAN HERE BUYS NOTHING. The account is provisioned on
+    /// the default plan exactly as before, and a paid choice becomes a PENDING
+    /// plan-change request at approval. The procedure refuses a code that is
+    /// not a public, active school plan (<c>INVALID_PLAN</c>) rather than
+    /// quietly storing NULL — silently dropping a field registration collected
+    /// is what SR-0 found happening to <c>PrincipalMobile</c>.
+    /// </para>
+    /// <para>
+    /// ⚠️ Null means "not asked, or not answered yet", which is NOT the same as
+    /// <c>SCHOOL_FREE</c> — "asked, and chose free".
+    /// </para>
+    /// </remarks>
+    public string? RequestedPlanCode { get; init; }
 }
 
 /// <summary>What the client needs back from a save to keep going.</summary>
@@ -286,6 +311,20 @@ public sealed record SchoolRegistrationDetailDto
     public string? ContactMobile { get; init; }
     public string? Website { get; init; }
     public string? AboutSchool { get; init; }
+
+    /// <summary>
+    /// 🔴 SR-4. The plan the school asked for — read back, so the choice is
+    /// visible on the review screen, on the status page and to the admin who
+    /// approves it.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE REASON THIS PROPERTY EXISTS ON THE READ AND NOT ONLY ON THE
+    /// WRITE: the orchestration that follows approval reads it from here to
+    /// decide whether to open a pending plan-change request. SR-0's finding was
+    /// a field collected by registration and absent from the procedure that
+    /// consumed it — carried end to end means carried on the way back too.
+    /// </remarks>
+    public string? RequestedPlanCode { get; init; }
 }
 
 public sealed record TeacherRegistrationDetailDto

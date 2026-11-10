@@ -273,6 +273,18 @@ internal sealed class ApplicationRepository : BaseRepository, IApplicationReposi
         p.Add("@PageNumber", filter.PageNumber, DbType.Int32);
         p.Add("@PageSize", filter.PageSize, DbType.Int32);
 
+        /*
+          SR-5. The profile-matched default: the teacher's own subjects and
+          class levels, as sets.
+
+          ⚠️ AN EMPTY TABLE IS SENT WHEN THE CALLER GAVE NOTHING, and the
+          procedure reads empty as "not filtering". That keeps one code path
+          instead of two, and means a browse with no sets behaves exactly as it
+          did before this parameter existed.
+        */
+        p.Add("@SubjectIds", IdList(filter.SubjectIds).AsTableValuedParameter("dbo.IntIdList"));
+        p.Add("@ClassLevelIds", IdList(filter.ClassLevelIds).AsTableValuedParameter("dbo.IntIdList"));
+
         return QueryMultipleAsync<(IReadOnlyList<JobBrowseItemDto>, long)>(
             "USP_BrowseJobs",
             async grid =>
@@ -418,5 +430,32 @@ internal sealed class ApplicationRepository : BaseRepository, IApplicationReposi
 
             return stats;
         }, p, cancellationToken);
+    }
+
+    /// <summary>A set of ids as <c>dbo.IntIdList</c>, for a table-valued parameter.</summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ NULL AND EMPTY BOTH PRODUCE AN EMPTY TABLE, deliberately. The caller
+    /// may have sent no subjects at all, or sent an empty array; both mean "do
+    /// not filter on this", and the procedure reads them the same way. Handling
+    /// them differently here would create a third state nobody asked for.
+    /// </para>
+    /// <para>
+    /// ⚠️ <c>Distinct()</c> because <c>dbo.IntIdList</c> has a PRIMARY KEY on
+    /// <c>Id</c>: a teacher whose profile somehow lists a subject twice would
+    /// otherwise turn a job search into a constraint violation.
+    /// </para>
+    /// </remarks>
+    private static DataTable IdList(IReadOnlyCollection<int>? ids)
+    {
+        var table = new DataTable();
+        table.Columns.Add("Id", typeof(int));
+
+        foreach (var id in (ids ?? []).Distinct())
+        {
+            table.Rows.Add(id);
+        }
+
+        return table;
     }
 }

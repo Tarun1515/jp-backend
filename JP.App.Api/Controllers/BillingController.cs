@@ -114,6 +114,45 @@ public sealed class BillingController : ControllerBase
             + "will confirm it."));
     }
 
+    /// <summary>
+    /// 🔴 SR-4. This account's open plan change, if it has one — the "how do I
+    /// pay" read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 WHY IT EXISTS. Until SR-4 a pending request could only be created by
+    /// the account pressing the button, so the screen described it from that
+    /// POST's own response and a reload made the account go quiet about money
+    /// it had promised. Registration can create one now (a school that picks a
+    /// paid plan while registering), which means the FIRST time a school sees
+    /// its pending request is a login days later with nothing to remember.
+    /// </para>
+    /// <para>
+    /// ⚠️ Null is the ordinary answer, returned as a 200 with no data — not a
+    /// 404. "You owe nothing" is a successful answer to the question, and a 404
+    /// here would make the school app treat a healthy account as a broken read.
+    /// </para>
+    /// <para>
+    /// ⚠️ No owner parameter, like every other account-facing route here: the
+    /// owner is the organisation for a school and the user for a teacher, taken
+    /// from the token (2.39, 2.51).
+    /// </para>
+    /// <para>
+    /// 🔴 PENDING STILL CHANGES NOTHING. This is a read of an intention. The
+    /// account's actual plan is <c>my-plan</c>, and on this path it is the free
+    /// one until an admin verifies the payment.
+    /// </para>
+    /// </remarks>
+    [HttpGet("my-pending-change")]
+    [ProducesResponseType(typeof(Response<OpenPlanChangeDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetMyPendingChange(CancellationToken cancellationToken)
+    {
+        var pending = await _billing.GetOpenPlanChangeAsync(User, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(pending));
+    }
+
     /// <summary>Every subscription this account has held.</summary>
     [HttpGet("my-history")]
     [ProducesResponseType(typeof(Response<IReadOnlyList<SubscriptionHistoryDto>>), StatusCodes.Status200OK)]

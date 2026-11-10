@@ -361,6 +361,34 @@ public sealed class JobBrowseFilter : PagedRequest
     public int? CityId { get; set; }
     public int? StateId { get; set; }
     public decimal? MinSalary { get; set; }
+
+    /// <summary>The teacher's own subjects, for the profile-matched default.</summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 SR-5. The client asked that a teacher opening the job list sees work
+    /// matching THEIR subjects and class levels — plural. A teacher of maths and
+    /// physics has two, and <see cref="SubjectId"/> can only carry one.
+    /// </para>
+    /// <para>
+    /// ⚠️ ADDED BESIDE <see cref="SubjectId"/>, NOT INSTEAD OF IT. The single
+    /// filter is what the toolbar's own dropdown sets when somebody picks one
+    /// subject by hand; this is the set the screen opens with. The procedure
+    /// applies both, so the two narrow together rather than fighting.
+    /// </para>
+    /// <para>
+    /// ⚠️ <c>int[]</c> AND NOT <c>IReadOnlyList&lt;int&gt;</c>, WHICH IS THIS
+    /// CODEBASE'S USUAL SHAPE. Those live on request bodies, where the JSON
+    /// deserialiser constructs the list. This type is bound <c>[FromQuery]</c>,
+    /// and ASP.NET Core's collection binder has to create and fill the instance
+    /// itself — it cannot do that for a read-only interface, so the values would
+    /// arrive silently empty and the screen would quietly stop filtering.
+    /// </para>
+    /// </remarks>
+    public int[]? SubjectIds { get; set; }
+
+    /// <summary>The teacher's own class levels, for the profile-matched default.</summary>
+    /// <remarks>See <see cref="SubjectIds"/> — same reasoning, same binding note.</remarks>
+    public int[]? ClassLevelIds { get; set; }
 }
 
 /// <summary>A job as it appears in the teacher's browse.</summary>

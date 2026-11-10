@@ -65,6 +65,20 @@ public interface IBillingService
         ClaimsPrincipal caller, RequestPlanChangeRequest request,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// 🔴 The account's own open plan change, or null. The "how do I pay" read.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ NOT gated on BILLING.MANAGE, unlike
+    /// <see cref="RequestPlanChangeAsync"/>. Committing the account to a
+    /// payment is a privilege; KNOWING the account owes money is not — an HR
+    /// who cannot upgrade still needs to understand why the allowance has not
+    /// changed, and hiding the answer would mean they conclude the request was
+    /// lost. The same reasoning keeps the plan panel visible to everybody.
+    /// </remarks>
+    Task<OpenPlanChangeDto?> GetOpenPlanChangeAsync(
+        ClaimsPrincipal caller, CancellationToken cancellationToken);
+
     /// <summary>Every subscription the caller has held.</summary>
     Task<IReadOnlyList<SubscriptionHistoryDto>> GetMyHistoryAsync(
         ClaimsPrincipal caller, CancellationToken cancellationToken);
@@ -279,6 +293,47 @@ internal sealed class BillingService : IBillingService
             PaymentId = row.PaymentId ?? 0,
             PaymentUid = row.PaymentUid ?? Guid.Empty,
             PriceQuoted = row.PriceQuoted ?? 0m,
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<OpenPlanChangeDto?> GetOpenPlanChangeAsync(
+        ClaimsPrincipal caller, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        /*
+          🔴 The owner from the TOKEN (2.39, 2.51) — and it is the SAME value
+          USP_RequestPlanChange wrote as EntityUid, which is what makes a
+          request opened by provisioning readable by the school that owns it.
+          A different notion of "owner" between the write and the read would
+          produce a request nobody can see and money nobody is asked for.
+        */
+        var row = await _billing
+            .GetOpenPlanChangeAsync(OwnerUidOf(caller), cancellationToken)
+            .ConfigureAwait(false);
+
+        /*
+          ⚠️ Null is the ordinary answer and the screen renders it as nothing at
+          all — not as a failure. Most accounts owe nothing most of the time.
+        */
+        if (row is null) return null;
+
+        return new OpenPlanChangeDto
+        {
+            RequestId = row.RequestId,
+            RequestNo = row.RequestNo,
+            SubmittedOn = row.SubmittedOn,
+            PaymentId = row.PaymentId,
+            PaymentUid = row.PaymentUid,
+            PlanId = row.PlanId,
+            PlanCode = row.PlanCode,
+            PlanName = row.PlanName,
+            DurationDays = row.DurationDays,
+            PriceQuoted = row.PriceQuoted,
+            Amount = row.Amount,
+            PaymentModeId = row.PaymentModeId,
+            PaymentModeName = row.PaymentModeName,
         };
     }
 

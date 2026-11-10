@@ -78,8 +78,17 @@
   own branches. A school that lets its plan lapse must still be able to reach
   the people who applied while it was paying.
 
-  That is why APPLICATION_VIEW stays FREE here, and sr-billing.mjs asserts it
-  from the outside with an exhausted quota.
+  That is why APPLICATION_VIEW stays FREE here, and entitlement-http.mjs
+  asserts the same claim from outside the database — it reads the live
+  /api/entitlements response and requires APPLICATION_VIEW to come back with
+  gatingModeCode FREE, alongside JOB_FEATURED and TEACHER_PROFILE_BOOST.
+
+  ⚠️ THIS CITATION USED TO NAME `sr-billing.mjs`, WHICH DOES NOT EXIST — the
+  file was planned and never written, and the comment outlived the plan. The
+  rule was in fact covered the whole time, by the suite named above; nothing
+  was unprotected. Recorded because a citation nobody can follow is exactly how
+  a guard quietly stops being checked: the next person to read this would
+  either hunt for a missing file or trust a suite that was never there.
 
   IDEMPOTENT. Every statement keys on the stable Code (2.47) and re-running
   changes nothing.

@@ -89,9 +89,24 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
     // m_sso_user_types. School.
     private const int UserTypeSchool = 2;
 
+    /// <summary>
+    /// m_mdm_payment_modes. NEFT — the mode the billing screen offers first and
+    /// the only one that needs no physical handover.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE SAME DEFAULT THE SCREEN USES, and it is a default rather than a
+    /// commitment: registration does not ask how a school intends to pay,
+    /// because asking would be the first step of a checkout and nothing is
+    /// being bought yet. An admin records what actually arrived — cheque, cash
+    /// or a transfer — when they verify it (6.5-B), so this value never
+    /// survives contact with the money.
+    /// </remarks>
+    private const int PaymentModeNeft = 2;
+
     private readonly IUserRepository _users;
     private readonly IProvisioningRepository _provisioning;
     private readonly IPlanRepository _plans;
+    private readonly IBillingRepository _billing;
     private readonly IEmailDispatchQueue _emailQueue;
     private readonly ILogger<ApprovalOrchestrationService> _logger;
 
@@ -99,12 +114,14 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
         IUserRepository users,
         IProvisioningRepository provisioning,
         IPlanRepository plans,
+        IBillingRepository billing,
         IEmailDispatchQueue emailQueue,
         ILogger<ApprovalOrchestrationService> logger)
     {
         _users = users;
         _provisioning = provisioning;
         _plans = plans;
+        _billing = billing;
         _emailQueue = emailQueue;
         _logger = logger;
     }
@@ -343,6 +360,35 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
                 "This has been logged and needs to be retried.");
         }
 
+        /*
+          ---- STEP 2c: the plan the school ASKED FOR, if it was a paid one ----
+
+          🔴 THE ACCOUNT IS ALREADY ON FREE AT THIS POINT, AND STAYS THERE.
+
+          Step 2 gave it the DEFAULT plan — it always has. This step does not
+          touch that subscription, and could not: it writes to jp_mdm and the
+          subscription is in jp_app (2.2). What it creates is a PENDING
+          PLAN_CHANGE request with a PENDING payment beside it, through
+          USP_RequestPlanChange — the mechanism 011_seed_plan_change_request.sql
+          configured and the billing screen already uses. There is no second
+          path, and deliberately so: a registration-only way to go paid would
+          be a second place the "pending changes nothing" rule has to hold.
+
+          🔴 AFTER STEP 2, NOT INSTEAD OF IT, AND NEVER FATAL.
+
+          A school whose plan request fails is a school on the free plan that
+          has to ask again — annoying, recoverable, and visible on the billing
+          screen. A school whose APPROVAL fails because a plan request did is
+          one that cannot sign in at all. The ordering says which of those two
+          outcomes is acceptable.
+
+          ⚠️ So every failure below logs loudly and falls through. The school
+          exists, the account works, and the orchestration still reports
+          success — because the thing the admin approved did happen.
+        */
+        await RequestChosenPlanAsync(header, school, organizationUid, planId, cancellationToken)
+            .ConfigureAwait(false);
+
         // ---- STEP 3: queue the email ---------------------------------------
         //
         // Last, and never fatal. The account works and the school exists; a
@@ -374,6 +420,176 @@ internal sealed class ApprovalOrchestrationService : IApprovalOrchestrationServi
             header.RequestNo, header.RequestId, header.RequestorUserId);
 
         return OrchestrationOutcome.Ok();
+    }
+
+    /// <summary>
+    /// 🔴 SR-4. Turns the plan a school asked for at registration into a
+    /// PENDING plan-change request — and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 WHAT THIS METHOD IS NOT ALLOWED TO DO: make the account paid. The
+    /// subscription created in step 2 is the DEFAULT (free) plan and is not
+    /// touched here. All this does is write the request and the pending payment
+    /// that an admin will verify — exactly what the school would have got by
+    /// pressing the button on the billing screen a minute after signing in.
+    /// </para>
+    /// <para>
+    /// ⚠️ <paramref name="defaultPlanId"/> IS HOW "THEY CHOSE FREE" IS
+    /// DETECTED, rather than a string comparison against <c>SCHOOL_FREE</c>.
+    /// The default plan is the one step 2 actually used, so comparing against
+    /// it cannot drift from what was provisioned — and the free plan's code is
+    /// not hardcoded anywhere in this file (2.47).
+    /// </para>
+    /// <para>
+    /// 🔴 EntityUid IS THE ORGANISATION, and that is load-bearing. It is the
+    /// value <c>BillingService.OwnerUidOf</c> reads for a school (2.51) and the
+    /// one <c>t_app_subscriptions.OwnerUid</c> keys on. A different notion of
+    /// "owner" here would create a request the school cannot see, for money
+    /// nobody is ever asked for.
+    /// </para>
+    /// <para>
+    /// ⚠️ <c>ALREADY_REQUESTED</c> IS A SUCCESS, not a failure. A re-run of a
+    /// half-completed orchestration must converge rather than duplicate
+    /// (2.48), and the procedure's one-open-request-per-owner rule is what
+    /// makes the retry safe: the second call finds the first call's request and
+    /// refuses to stack a second one.
+    /// </para>
+    /// </remarks>
+    private async Task RequestChosenPlanAsync(
+        ApprovalRequestListItemDto header,
+        SchoolRegistrationDetailDto school,
+        Guid organizationUid,
+        int defaultPlanId,
+        CancellationToken cancellationToken)
+    {
+        var chosen = school.RequestedPlanCode?.Trim();
+
+        /*
+          ⚠️ Nothing to do, and NOT a problem. An empty value means the draft
+          was started before the question existed, or the school never reached
+          the review step — and every registration approved before SR-4 lands
+          here. Logging it would be noise on the normal path.
+        */
+        if (string.IsNullOrEmpty(chosen)) return;
+
+        try
+        {
+            var plan = await _plans.GetByCodeAsync(chosen, cancellationToken).ConfigureAwait(false);
+
+            if (plan is null)
+            {
+                /*
+                  🔴 THE PLAN WENT AWAY BETWEEN THE DRAFT AND THE APPROVAL.
+
+                  USP_GetPlanByCode filters on IsPublic and Is_Active precisely
+                  so a withdrawn tier stops resolving — opening a payment for a
+                  plan that no longer exists would be worse than opening none.
+
+                  Logged at Error because the school DID ask for something and
+                  is not going to get it. They are on the free plan, which is
+                  what every screen will tell them, so nobody is misled — but
+                  somebody should ring them.
+                */
+                _logger.LogError(
+                    "Approval {RequestNo} (RequestId {RequestId}): the school asked for plan {PlanCode} and it no "
+                    + "longer resolves to a public, active plan. The school is provisioned on the free plan and NO "
+                    + "plan-change request was opened. Nothing is overstated to the school — but this registration "
+                    + "wanted a paid plan and did not get one.",
+                    header.RequestNo, header.RequestId, chosen);
+
+                return;
+            }
+
+            /*
+              ⚠️ They chose the plan the account already has. Nothing to
+              request, and a request would be refused anyway — "move to the
+              plan you are on" is not a change.
+            */
+            if (plan.PlanId == defaultPlanId) return;
+
+            /*
+              🔴 A SECOND USER-TYPE CHECK, and it is not redundant.
+
+              USP_SaveSchoolRegistrationDraft refuses a non-school plan code, so
+              a draft cannot legitimately hold one. This catches a row that
+              predates that rule or was written straight to the database — and
+              the cost of being wrong is a school account carrying a teacher
+              plan's quotas, which the entitlement engine would honour without
+              complaint because it only ever reads the mapping.
+            */
+            if (plan.UserTypeId != UserTypeSchool)
+            {
+                _logger.LogError(
+                    "Approval {RequestNo} (RequestId {RequestId}): the registration asked for plan {PlanCode}, "
+                    + "which belongs to user type {UserTypeId} and not to a school. No plan-change request was "
+                    + "opened. This draft's plan code did not come through the registration form.",
+                    header.RequestNo, header.RequestId, chosen, plan.UserTypeId);
+
+                return;
+            }
+
+            var requested = await _billing.RequestPlanChangeAsync(
+                organizationUid,
+                organizationUid,
+                header.RequestorUserId,
+                UserTypeSchool,
+                plan.PlanId,
+                PaymentModeNeft,
+                cancellationToken).ConfigureAwait(false);
+
+            if (requested.Status == 1)
+            {
+                _logger.LogInformation(
+                    "Approval {RequestNo}: the school asked for {PlanCode} at registration, so plan-change request "
+                    + "{PlanRequestNo} is awaiting payment. 🔴 The account is on the FREE plan until an admin "
+                    + "verifies it.",
+                    header.RequestNo, plan.PlanCode, requested.RequestNo);
+
+                return;
+            }
+
+            if (string.Equals(requested.Code, "ALREADY_REQUESTED", StringComparison.Ordinal))
+            {
+                // A re-run of this orchestration. The first pass opened it;
+                // this one found it. That is convergence, not a failure (2.48).
+                _logger.LogInformation(
+                    "Approval {RequestNo}: a plan change for {PlanCode} was already awaiting payment, so none was "
+                    + "created. This is what a retried orchestration looks like.",
+                    header.RequestNo, plan.PlanCode);
+
+                return;
+            }
+
+            _logger.LogError(
+                "Approval {RequestNo} (RequestId {RequestId}): the school asked for {PlanCode} and the plan-change "
+                + "request was refused with {Code} — {Message}. The school exists and is on the free plan; it can "
+                + "request the plan again from the billing screen.",
+                header.RequestNo, header.RequestId, chosen, requested.Code, requested.Message);
+        }
+        catch (Exception ex)
+        {
+            /*
+              ⚠️ SWALLOWED, AND THE COMMENT IS THE JUSTIFICATION.
+
+              Everything the admin approved has already happened and committed:
+              the account is active and the school exists on the free plan. A
+              rethrow here would report the APPROVAL as failed, which would be
+              false, and an admin acting on that falsehood would re-approve a
+              school that is already provisioned.
+
+              The school's own screens read the pending request from the
+              database rather than from this call, so a failure here shows up
+              as "no pending request" — the truth — rather than as a promise
+              nothing kept.
+            */
+            _logger.LogError(
+                ex,
+                "Approval {RequestNo} (RequestId {RequestId}): opening the plan-change request for {PlanCode} threw. "
+                + "The school IS provisioned and IS on the free plan — only the paid request is missing, and it can "
+                + "be made again from the billing screen.",
+                header.RequestNo, header.RequestId, chosen);
+        }
     }
 
     /// <summary>

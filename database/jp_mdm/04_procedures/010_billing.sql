@@ -6,6 +6,7 @@
     USP_AllocateReceiptNo       RCP-YYYY-NNNNN, from a counter row (2.46)
     USP_GetPlanCatalog          the public plans for one user type
     USP_RequestPlanChange       request + pending payment, one transaction
+    USP_GetMyOpenPlanChange     the account's own open request — "how do I pay"
     USP_GetPendingPayments      the admin queue
     USP_GetPaymentForVerify     one payment, with the expected amount beside it
     USP_VerifyPayment           the verify half of 6.5-A's seam — idempotent
@@ -400,11 +401,51 @@ BEGIN
         SET @Message = N'Your request has been recorded.';
     END TRY
     BEGIN CATCH
+        /*
+          🔴 FIXED IN SR-4, AND IT WAS BROKEN FROM 6.5A.
+
+          This block called USP_LogError with @ProcedureName and @UserId.
+          jp_mdm's USP_LogError (000_USP_LogError.sql) takes neither — its
+          parameters are the ERROR_* values, @ParametersJson, @ContextInfo and
+          @CreatedBy, because ERROR_* is only readable inside the CATCH that
+          caught it and the caller has already rolled back by the time the
+          logger runs.
+
+          So every path through here raised "@ProcedureName is not a parameter
+          for procedure USP_LogError" INSTEAD of the real failure, and the THROW
+          below never ran. Nothing noticed because nothing had reached this
+          CATCH: the happy path and both refusals return before it.
+
+          ⚠️ SR-4 is what makes it matter. Provisioning now calls this procedure
+          from the approval orchestration, where a failure is caught, logged and
+          deliberately not fatal — so the one thing the operator would have to go
+          on is this log row and the exception message, and both were about a
+          parameter name rather than about the money.
+
+          ⚠️ The ERROR_* values are captured BEFORE the rollback, like every
+          other CATCH in this database (007, 001_provisioning): after it they
+          are gone.
+        */
+        DECLARE @ErrNumber int = ERROR_NUMBER(), @ErrSeverity int = ERROR_SEVERITY(),
+                @ErrState int = ERROR_STATE(), @ErrProcedure sysname = ERROR_PROCEDURE(),
+                @ErrLine int = ERROR_LINE(), @ErrMessage nvarchar(4000) = ERROR_MESSAGE();
+
         IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;
 
-        EXEC dbo.USP_LogError
-            @ProcedureName = 'USP_RequestPlanChange',
-            @UserId        = @RequestorUserId;
+        /*
+          ⚠️ No amount and no price in the masked parameters — only the ids
+          needed to find the row again. A log line is not the place to restate
+          what somebody agreed to pay.
+        */
+        DECLARE @Params nvarchar(max) = (
+            SELECT @EntityUid AS entityUid, @RequestorUserId AS requestorUserId,
+                   @PlanId AS planId
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER);
+
+        EXEC dbo.USP_LogError @ErrorNumber = @ErrNumber, @ErrorSeverity = @ErrSeverity,
+             @ErrorState = @ErrState, @ErrorProcedure = @ErrProcedure, @ErrorLine = @ErrLine,
+             @ErrorMessage = @ErrMessage, @ParametersJson = @Params,
+             @ContextInfo = N'USP_RequestPlanChange', @CreatedBy = @RequestorUserId;
 
         THROW;
     END CATCH
@@ -480,6 +521,94 @@ BEGIN
     ORDER BY pay.CreatedOn DESC, pay.PaymentId DESC
     OFFSET (@PageNumber - 1) * @PageSize ROWS
     FETCH NEXT @PageSize ROWS ONLY;
+END
+GO
+
+/*==============================================================================
+  USP_GetMyOpenPlanChange — the account's OWN open plan change, if it has one.
+
+  ---------------------------------------------------------------------------
+  🔴 THIS IS THE "HOW DO I PAY" READ, AND IT EXISTS BECAUSE NOTHING ANSWERED IT
+  ---------------------------------------------------------------------------
+  6.5B's billing screen could only tell a school about a request it had just
+  made, in that browser session, from the POST's own response. Reload the page
+  and the account went quiet about the money it had promised.
+
+  That was survivable while the only way to request a plan was to press the
+  button yourself. SR-4 makes registration able to create one, which means the
+  FIRST time a school ever sees its pending request is a login days later, on a
+  different device, with no POST response anywhere — so the state has to be
+  readable rather than remembered.
+
+  ⚠️ SCOPED BY @EntityUid, AND THE CALLER DOES NOT CHOOSE IT. The API passes
+  the owner from the token — the organisation for a school, the user for a
+  teacher (2.39, 2.51) — which is the same value USP_RequestPlanChange wrote.
+  There is no account parameter a client could change to read somebody else's
+  money.
+
+  🔴 PENDING STILL CHANGES NOTHING. This is a READ. It returns no entitlement,
+  no quota and no subscription — only what was asked for, what it is expected
+  to cost, and the reference to quote (2.46). The active subscription rules
+  until a payment is verified, and this procedure is deliberately unable to
+  say otherwise.
+
+  ⚠️ ONE ROW OR NONE. USP_RequestPlanChange enforces one open request per
+  owner, so TOP (1) is belt and braces rather than a choice between candidates
+  — and it is ordered newest-first so that if that rule is ever relaxed, this
+  answers with the current intention instead of an arbitrary one.
+
+  ⚠️ Every alias is for Dapper (2.61) — G25 is exactly this bug.
+==============================================================================*/
+CREATE OR ALTER PROCEDURE dbo.USP_GetMyOpenPlanChange
+    @EntityUid uniqueidentifier
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @PLAN_CHANGE int = 5, @PENDING int = 1, @PAYMENT_PENDING int = 1;
+
+    SELECT TOP (1)
+        r.RequestId,
+        r.RequestNo,
+        r.SubmittedOn,
+
+        pay.PaymentId,
+        pay.PaymentUid,
+        pay.PlanId,
+        pl.PlanCode,
+        pl.Name          AS PlanName,
+        pl.DurationDays,
+
+        /*
+          🔴 PriceQuoted, NOT today's m_mdm_plans.Price.
+
+          The figure the school agreed to is the figure they should be asked
+          for. Prices are data and will change (2.7) — 013_seed_school_plans
+          says these particular numbers are placeholders the client told us to
+          put in — and re-deriving the expected amount from the catalogue would
+          silently restate an agreement made last month.
+
+          ⚠️ Amount is what is RECORDED against the payment, which at PENDING
+          is still the expected figure; the admin overwrites it with what
+          actually arrived (6.5-B). Both are returned so a screen never has to
+          guess which one it is showing.
+        */
+        pay.PriceQuoted,
+        pay.Amount,
+        pay.PaymentModeId,
+        pm.Name          AS PaymentModeName,
+        pay.CreatedOn
+    FROM dbo.t_mdm_approval_requests r
+    INNER JOIN dbo.t_mdm_request_payments pay ON pay.RequestId      = r.RequestId
+                                             AND pay.Is_Deleted     = 0
+                                             AND pay.PaymentStatusId = @PAYMENT_PENDING
+    INNER JOIN dbo.m_mdm_payment_modes    pm  ON pm.PaymentModeId   = pay.PaymentModeId
+    LEFT  JOIN dbo.m_mdm_plans            pl  ON pl.PlanId          = pay.PlanId
+    WHERE r.RequestTypeId = @PLAN_CHANGE
+      AND r.EntityUid     = @EntityUid
+      AND r.StatusId      = @PENDING
+      AND r.Is_Deleted    = 0
+    ORDER BY r.SubmittedOn DESC, r.RequestId DESC;
 END
 GO
 
@@ -747,6 +876,15 @@ BEGIN
         SET @Message = N'The payment is verified.';
     END TRY
     BEGIN CATCH
+        /*
+          ⚠️ Captured before the rollback, and before the 2601 branch below
+          reads ERROR_NUMBER() — see the note in USP_RequestPlanChange's CATCH
+          for why these cannot be read after it.
+        */
+        DECLARE @VErrNumber int = ERROR_NUMBER(), @VErrSeverity int = ERROR_SEVERITY(),
+                @VErrState int = ERROR_STATE(), @VErrProcedure sysname = ERROR_PROCEDURE(),
+                @VErrLine int = ERROR_LINE(), @VErrMessage nvarchar(4000) = ERROR_MESSAGE();
+
         IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;
 
         /*
@@ -755,7 +893,7 @@ BEGIN
           is told the truth and handed the winner's receipt, so its caller can
           still go on to activate (which is itself idempotent).
         */
-        IF ERROR_NUMBER() IN (2601, 2627)
+        IF @VErrNumber IN (2601, 2627)
         BEGIN
             SELECT @ExistingReceipt = rcp.ReceiptNo
               FROM dbo.t_mdm_payment_receipts rcp
@@ -770,9 +908,24 @@ BEGIN
             RETURN;
         END
 
-        EXEC dbo.USP_LogError
-            @ProcedureName = 'USP_VerifyPayment',
-            @UserId        = @VerifiedByUserId;
+        /*
+          🔴 THE SAME 6.5A BUG AS USP_RequestPlanChange's CATCH, FIXED HERE TOO.
+
+          @ProcedureName and @UserId are not parameters of jp_mdm's
+          USP_LogError, so this raised a parameter-name error instead of logging
+          the real one — and on the one procedure in the product where the money
+          has already arrived and the failure must be reconstructable. Fixing
+          one of the two and leaving the other would have left a trap in the
+          file next to its own fix.
+        */
+        DECLARE @VParams nvarchar(max) = (
+            SELECT @PaymentId AS paymentId, @VerifiedByUserId AS verifiedByUserId
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER);
+
+        EXEC dbo.USP_LogError @ErrorNumber = @VErrNumber, @ErrorSeverity = @VErrSeverity,
+             @ErrorState = @VErrState, @ErrorProcedure = @VErrProcedure, @ErrorLine = @VErrLine,
+             @ErrorMessage = @VErrMessage, @ParametersJson = @VParams,
+             @ContextInfo = N'USP_VerifyPayment', @CreatedBy = @VerifiedByUserId;
 
         THROW;
     END CATCH
@@ -793,6 +946,7 @@ DECLARE @missing nvarchar(400) = N'';
 IF OBJECT_ID('dbo.USP_AllocateReceiptNo', 'P') IS NULL SET @missing = @missing + N'USP_AllocateReceiptNo ';
 IF OBJECT_ID('dbo.USP_GetPlanCatalog',    'P') IS NULL SET @missing = @missing + N'USP_GetPlanCatalog ';
 IF OBJECT_ID('dbo.USP_RequestPlanChange', 'P') IS NULL SET @missing = @missing + N'USP_RequestPlanChange ';
+IF OBJECT_ID('dbo.USP_GetMyOpenPlanChange','P') IS NULL SET @missing = @missing + N'USP_GetMyOpenPlanChange ';
 IF OBJECT_ID('dbo.USP_GetPendingPayments','P') IS NULL SET @missing = @missing + N'USP_GetPendingPayments ';
 IF OBJECT_ID('dbo.USP_GetPaymentForVerify','P') IS NULL SET @missing = @missing + N'USP_GetPaymentForVerify ';
 IF OBJECT_ID('dbo.USP_VerifyPayment',     'P') IS NULL SET @missing = @missing + N'USP_VerifyPayment ';
@@ -887,7 +1041,13 @@ IF EXISTS (
                              OBJECT_ID('dbo.USP_RequestPlanChange'),
                              OBJECT_ID('dbo.USP_GetPlanCatalog'),
                              OBJECT_ID('dbo.USP_GetPendingPayments'),
-                             OBJECT_ID('dbo.USP_GetPaymentForVerify'))
+                             OBJECT_ID('dbo.USP_GetPaymentForVerify'),
+
+                             -- SR-4. In the list on the day it was written,
+                             -- because a billing object added later and left
+                             -- out of this guard is a billing object nothing
+                             -- checks.
+                             OBJECT_ID('dbo.USP_GetMyOpenPlanChange'))
        AND d.referenced_entity_name IN ('fn_TeacherContactUnlocked',
                                         'fn_TeacherContactUnlockedForSchool')
 )

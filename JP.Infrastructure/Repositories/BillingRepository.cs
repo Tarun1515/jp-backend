@@ -74,6 +74,45 @@ internal sealed class VerifyPaymentRow
     public long? RequestId { get; set; }
 }
 
+/// <summary>
+/// The result of <c>USP_GetMyOpenPlanChange</c> — the account's own open
+/// request, read rather than remembered.
+/// </summary>
+/// <remarks>
+/// <para>
+/// 🔴 IT EXISTS BECAUSE 6.5B COULD ONLY REMEMBER. The billing screen knew about
+/// a pending request from the POST's own response, so a reload made the account
+/// go quiet about money it had promised. SR-4 lets REGISTRATION create one,
+/// which means the first time a school ever sees its pending request is a
+/// login days later with no POST response anywhere.
+/// </para>
+/// <para>
+/// 🔴 PENDING CHANGES NOTHING. There is no entitlement, quota or subscription
+/// field on this shape, and that is deliberate: nothing read here could be
+/// mistaken for capability the account has not paid for.
+/// </para>
+/// </remarks>
+internal sealed class OpenPlanChangeRow
+{
+    public long RequestId { get; set; }
+    public string RequestNo { get; set; } = string.Empty;
+    public DateTime SubmittedOn { get; set; }
+    public long PaymentId { get; set; }
+    public Guid PaymentUid { get; set; }
+    public int PlanId { get; set; }
+    public string PlanCode { get; set; } = string.Empty;
+    public string PlanName { get; set; } = string.Empty;
+    public int? DurationDays { get; set; }
+
+    /// <summary>🔴 What was AGREED, not what the catalogue says today (2.7).</summary>
+    public decimal? PriceQuoted { get; set; }
+
+    public decimal Amount { get; set; }
+    public int PaymentModeId { get; set; }
+    public string PaymentModeName { get; set; } = string.Empty;
+    public DateTime CreatedOn { get; set; }
+}
+
 internal sealed class PendingPaymentRow
 {
     public long PaymentId { get; set; }
@@ -149,6 +188,13 @@ internal interface IBillingRepository
         Guid entityUid, Guid? organizationUid, long requestorUserId,
         int userTypeId, int planId, int paymentModeId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The account's own open plan change, or null. Scoped by owner, never by a
+    /// parameter a client picks (2.39, 2.51).
+    /// </summary>
+    Task<OpenPlanChangeRow?> GetOpenPlanChangeAsync(
+        Guid entityUid, CancellationToken cancellationToken);
+
     Task<IReadOnlyList<PendingPaymentRow>> GetPendingAsync(
         int pageNumber, int pageSize, CancellationToken cancellationToken);
 
@@ -220,6 +266,16 @@ internal sealed class BillingRepository : BaseRepository, IBillingRepository
         p.Add("@PaymentModeId", paymentModeId, DbType.Int32);
 
         return QuerySingleAsync<PlanChangeRow>("USP_RequestPlanChange", p, cancellationToken);
+    }
+
+    public Task<OpenPlanChangeRow?> GetOpenPlanChangeAsync(
+        Guid entityUid, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@EntityUid", entityUid, DbType.Guid);
+
+        return QueryFirstOrDefaultAsync<OpenPlanChangeRow>(
+            "USP_GetMyOpenPlanChange", p, cancellationToken);
     }
 
     public Task<IReadOnlyList<PendingPaymentRow>> GetPendingAsync(

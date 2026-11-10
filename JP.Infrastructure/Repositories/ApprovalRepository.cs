@@ -391,6 +391,16 @@ internal sealed class ApprovalRepository : BaseRepository, IApprovalRepository
         p.Add("@Website", request.Website, DbType.String, size: 255);
         p.Add("@AboutSchool", request.AboutSchool, DbType.String, size: -1);
 
+        /*
+          🔴 SR-4. The plan the school asked for, carried end to end.
+
+          AnsiString with size 30 to match varchar(30) on both the column (041)
+          and m_mdm_plans.PlanCode. DbType.String would send nvarchar and make
+          every comparison against the varchar column a conversion — the same
+          reason every other code column in this method is AnsiString.
+        */
+        p.Add("@RequestedPlanCode", request.RequestedPlanCode, DbType.AnsiString, size: 30);
+
         return QuerySingleAsync<SaveDraftProcResult>("USP_SaveSchoolRegistrationDraft", p, cancellationToken);
     }
 
