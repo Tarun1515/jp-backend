@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Claims;
 using System.Text.Json;
 using System.Threading.RateLimiting;
 using JP.Core.Common;
@@ -79,8 +80,52 @@ internal static class PublicRateLimiting
         return PartitionedRateLimiter.CreateChained(
             ReadsPerIp(options.PublicReadsPerIp),
             ContactPerIp(options.ContactPerIp),
-            AddressLookupPerIp(options.AddressLookupPerIp));
+            AddressLookupPerIp(options.AddressLookupPerIp),
+            AddressLookupPerSession(options.AddressLookupPerSession));
     }
+
+    /// <summary>
+    /// Address autocomplete over an hour, per signed-in user where there is
+    /// one and per IP where there is not.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THIS IS THE CEILING THE MINUTE WINDOW CANNOT EXPRESS. 30/minute
+    /// sustained is 43,200 billed calls a day from one address, and the bill
+    /// is the client's. `CreateChained` rejects if EITHER limiter says no, so
+    /// a burst still passes and a day of bursts does not.
+    ///
+    /// ⚠️ KEYED ON THE USER WHERE WE HAVE ONE. These calls usually carry a
+    /// token — the registration form is reached after signing up — even though
+    /// the endpoint allows anonymous ones. Without this, a school behind a
+    /// shared office NAT would be limited by its colleagues' typing, which is
+    /// a false positive that lands in the middle of registering.
+    ///
+    /// ⚠️ The partition keys are PREFIXED differently so a user id and an IP
+    /// can never collide in one bucket.
+    /// </remarks>
+    private static PartitionedRateLimiter<HttpContext> AddressLookupPerSession(RateLimitWindow window) =>
+        PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        {
+            var path = context.Request.Path.Value?.ToLowerInvariant() ?? string.Empty;
+
+            var isLookup =
+                path.Equals(AddressSuggestPath, StringComparison.Ordinal)
+                || path.Equals(AddressResolvePath, StringComparison.Ordinal);
+
+            if (!isLookup)
+            {
+                return RateLimitPartition.GetNoLimiter("none");
+            }
+
+            var user = context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                ?? context.User?.FindFirst("sub")?.Value;
+
+            var key = string.IsNullOrWhiteSpace(user)
+                ? $"address-session:ip:{ClientIp(context)}"
+                : $"address-session:user:{user}";
+
+            return RateLimitPartition.GetFixedWindowLimiter(key, _ => Options(window));
+        });
 
     /// <summary>
     /// Every public READ, per IP.
@@ -220,6 +265,31 @@ internal sealed class PublicRateLimitOptions
     /// per call.
     /// </summary>
     public RateLimitWindow AddressLookupPerIp { get; set; } = new() { PermitLimit = 30, WindowSeconds = 60 };
+
+    /// <summary>
+    /// Address autocomplete again, over an HOUR, per signed-in user where
+    /// there is one and per IP where there is not.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE MINUTE WINDOW ALONE DOES NOT CAP A DAY. 30/minute is generous on
+    /// purpose, because typing an address is bursty — but thirty a minute
+    /// sustained is 43,200 billed calls a day from one address, and the bill
+    /// is the client's. This is the ceiling the minute window cannot express.
+    ///
+    /// ⚠️ 120 AN HOUR IS SET AGAINST THE REAL TASK, not against a round number.
+    /// A school fills in ONE address during registration. Even typing it
+    /// badly, correcting it twice and resolving three candidates is a few
+    /// dozen calls — so a legitimate registration never approaches this, and
+    /// anything that does is not registering a school.
+    ///
+    /// ⚠️ PER USER WHERE WE KNOW THE USER. The registration form is reached
+    /// after signing up, so these calls usually carry a token even though the
+    /// endpoint allows anonymous ones. Keying on the user where there is one
+    /// means a school behind a shared office NAT is not rate-limited by its
+    /// colleagues, which is exactly the false positive that would land
+    /// mid-registration.
+    /// </remarks>
+    public RateLimitWindow AddressLookupPerSession { get; set; } = new() { PermitLimit = 120, WindowSeconds = 3600 };
 }
 
 /// <summary>One fixed window. Mirrors the SSO API's type of the same name.</summary>

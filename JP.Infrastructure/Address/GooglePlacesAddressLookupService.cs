@@ -28,8 +28,66 @@ namespace JP.Infrastructure.Address;
 /// </remarks>
 internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
 {
-    private const string AutocompleteUrl = "https://maps.googleapis.com/maps/api/place/autocomplete/json";
-    private const string DetailsUrl = "https://maps.googleapis.com/maps/api/place/details/json";
+    /// <summary>
+    /// The shortest query that may reach Google, in characters.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 RAISED FROM TWO TO THREE WHEN THE CLIENT'S OWN KEY WENT IN. Every
+    /// request past this point is billed to them, and two letters still match
+    /// most of the country — so the second character buys a worse list and a
+    /// real cost.
+    ///
+    /// ⚠️ A CONSTANT, NOT A SETTING. A quota floor that an operator can lower
+    /// in config is a quota floor somebody lowers at three in the morning to
+    /// make a demo feel snappier. The per-IP window above it IS configurable,
+    /// because that one is about traffic shape rather than about what we are
+    /// willing to spend per keystroke.
+    /// </remarks>
+    internal const int MinimumQueryLength = 3;
+
+    /*
+      ----------------------------------------------------------------------------
+      🔴 PLACES API (NEW), NOT THE LEGACY ONE — AND GOOGLE TOLD US SO IN WORDS
+      ----------------------------------------------------------------------------
+      SR-2 built this against `maps.googleapis.com/maps/api/place/*`. The first
+      call made with the client's real key came back HTTP 200 with:
+
+          REQUEST_DENIED: You're calling a legacy API, which is not enabled for
+          your project. Switch to the Places API (New) or Routes API.
+
+      The key was fine — it reached Google and got an authenticated refusal, not
+      an auth error. Google simply does not enable the legacy endpoints on
+      projects created now, so an implementation written against them cannot be
+      turned on by any amount of configuration.
+
+      ⚠️ AND THE SEAM BEHAVED EXACTLY AS DESIGNED WHILE THAT WAS TRUE: the
+      warning was logged with Google's own sentence, the suggestion list came
+      back empty, and the form fell through to the manual cascade. Nothing
+      broke; it just did nothing. Which is why the log line matters more than
+      the HTTP code here.
+
+      ----------------------------------------------------------------------------
+      ⚠️ THE KEY MOVES FROM THE QUERY STRING TO A HEADER, AND THAT IS A GAIN
+      ----------------------------------------------------------------------------
+      The legacy API took `&key=`; the new one takes `X-Goog-Api-Key`. A secret
+      in a URL is a secret in every access log, proxy log and error report that
+      ever records the request. A header is not. We would have wanted this
+      change even if the legacy API still worked.
+    */
+    private const string AutocompleteUrl = "https://places.googleapis.com/v1/places:autocomplete";
+    private const string DetailsUrlPrefix = "https://places.googleapis.com/v1/places/";
+
+    /// <summary>
+    /// The fields Place Details may return.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 REQUIRED BY THE NEW API, AND IT IS ALSO THE BILL. Places (New) refuses
+    /// a details call with no field mask, and it prices the call by which
+    /// fields are asked for — so this list is deliberately the four we parse
+    /// and nothing else. Adding `*` here would work and would quietly move the
+    /// call into a more expensive tier.
+    /// </remarks>
+    private const string DetailsFieldMask = "id,formattedAddress,addressComponents,location";
 
     private readonly HttpClient _http;
     private readonly AddressLookupOptions _options;
@@ -59,31 +117,58 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
         var key = Key;
 
         /*
-          ⚠️ TWO CHARACTERS IS THE FLOOR, and it is about cost as much as
-          usefulness: every keystroke is a billed request, and "a" matches the
-          whole country.
+          ⚠️ THREE CHARACTERS IS THE FLOOR, raised from two when the client's
+          own key went in. It is about cost as much as usefulness: every
+          keystroke that reaches here is a BILLED request against somebody
+          else's account, and two letters still match most of the country.
+
+          🔴 IT IS ENFORCED HERE, NOT ONLY IN THE BROWSER. The client debounces
+          and counts characters too, but that is a courtesy to the user's
+          typing — it is not a control, because anyone can call
+          /api/address/suggest directly. The floor that protects the quota has
+          to be the one on this side of the wire.
         */
-        if (string.IsNullOrWhiteSpace(key) || query is null || query.Trim().Length < 2)
+        if (string.IsNullOrWhiteSpace(key) || query is null || query.Trim().Length < MinimumQueryLength)
         {
             return [];
         }
 
-        var url = $"{AutocompleteUrl}?input={Uri.EscapeDataString(query.Trim())}"
-            + $"&components=country:{Uri.EscapeDataString(_options.CountryBias)}"
-            + $"&key={Uri.EscapeDataString(key)}";
+        /*
+          ⚠️ A POST WITH A JSON BODY. Autocomplete in Places (New) is a POST,
+          and the country bias is `includedRegionCodes` rather than a
+          `components=country:` string.
+        */
+        var request = new HttpRequestMessage(HttpMethod.Post, AutocompleteUrl)
+        {
+            Content = JsonContent.Create(new
+            {
+                input = query.Trim(),
+                includedRegionCodes = new[] { _options.CountryBias },
+            }),
+        };
 
-        var root = await GetAsync(url, "autocomplete", cancellationToken).ConfigureAwait(false);
+        var root = await CallAsync(request, key, "autocomplete", cancellationToken).ConfigureAwait(false);
 
-        if (root is null || !root.Value.TryGetProperty("predictions", out var predictions))
+        if (root is null || !root.Value.TryGetProperty("suggestions", out var suggestions))
         {
             return [];
         }
 
         var items = new List<AddressSuggestion>();
 
-        foreach (var p in predictions.EnumerateArray())
+        foreach (var s in suggestions.EnumerateArray())
         {
-            var placeId = Text(p, "place_id");
+            /*
+              ⚠️ A suggestion is EITHER a placePrediction OR a queryPrediction.
+              Only the first has a place id to resolve; a query prediction is a
+              search phrase, which this product has nothing to do with.
+            */
+            if (!s.TryGetProperty("placePrediction", out var p))
+            {
+                continue;
+            }
+
+            var placeId = Text(p, "placeId");
 
             if (string.IsNullOrWhiteSpace(placeId))
             {
@@ -93,16 +178,19 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
             string? main = null;
             string? secondary = null;
 
-            if (p.TryGetProperty("structured_formatting", out var sf))
+            if (p.TryGetProperty("structuredFormat", out var sf))
             {
-                main = Text(sf, "main_text");
-                secondary = Text(sf, "secondary_text");
+                if (sf.TryGetProperty("mainText", out var mt)) main = Text(mt, "text");
+                if (sf.TryGetProperty("secondaryText", out var st)) secondary = Text(st, "text");
             }
+
+            string? description = null;
+            if (p.TryGetProperty("text", out var t)) description = Text(t, "text");
 
             items.Add(new AddressSuggestion
             {
                 PlaceId = placeId!,
-                Description = Text(p, "description") ?? main ?? placeId!,
+                Description = description ?? main ?? placeId!,
                 MainText = main,
                 SecondaryText = secondary,
             });
@@ -120,18 +208,22 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
             return null;
         }
 
-        var url = $"{DetailsUrl}?place_id={Uri.EscapeDataString(placeId)}"
-            + "&fields=address_component,geometry,formatted_address"
-            + $"&key={Uri.EscapeDataString(key)}";
+        var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"{DetailsUrlPrefix}{Uri.EscapeDataString(placeId)}");
 
-        var root = await GetAsync(url, "details", cancellationToken).ConfigureAwait(false);
+        request.Headers.TryAddWithoutValidation("X-Goog-FieldMask", DetailsFieldMask);
 
-        if (root is null || !root.Value.TryGetProperty("result", out var result))
-        {
-            return null;
-        }
+        var root = await CallAsync(request, key, "details", cancellationToken).ConfigureAwait(false);
 
-        return await ToResolvedAsync(result, placeId, cancellationToken).ConfigureAwait(false);
+        /*
+          ⚠️ THE PLACE IS THE WHOLE BODY NOW. The legacy API wrapped it in a
+          `result` property; Places (New) returns the place itself, so there is
+          no envelope to unwrap and no `result` to go missing.
+        */
+        return root is null
+            ? null
+            : await ToResolvedAsync(root.Value, placeId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -156,7 +248,13 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
         string? stateName = null, districtName = null, tehsilName = null,
                 cityName = null, areaName = null, pincode = null, route = null, number = null;
 
-        if (result.TryGetProperty("address_components", out var components))
+        /*
+          ⚠️ `addressComponents` / `longText`, not `address_components` /
+          `long_name`. Places (New) is camelCase throughout, and the TYPES
+          inside are unchanged — which is why the matching rules below survived
+          the port untouched.
+        */
+        if (result.TryGetProperty("addressComponents", out var components))
         {
             foreach (var c in components.EnumerateArray())
             {
@@ -165,7 +263,7 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
                     continue;
                 }
 
-                var name = Text(c, "long_name");
+                var name = Text(c, "longText");
                 var set = types.EnumerateArray().Select(t => t.GetString()).ToHashSet(StringComparer.Ordinal);
 
                 if (set.Contains("administrative_area_level_1")) stateName ??= name;
@@ -209,11 +307,14 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
 
         decimal? lat = null, lng = null;
 
-        if (result.TryGetProperty("geometry", out var geometry)
-            && geometry.TryGetProperty("location", out var location))
+        /*
+          ⚠️ `location.latitude` / `.longitude` at the top level. The legacy API
+          nested it under `geometry` and spelled it `lat` / `lng`.
+        */
+        if (result.TryGetProperty("location", out var location))
         {
-            if (location.TryGetProperty("lat", out var la) && la.TryGetDecimal(out var lad)) lat = lad;
-            if (location.TryGetProperty("lng", out var ln) && ln.TryGetDecimal(out var lnd)) lng = lnd;
+            if (location.TryGetProperty("latitude", out var la) && la.TryGetDecimal(out var lad)) lat = lad;
+            if (location.TryGetProperty("longitude", out var ln) && ln.TryGetDecimal(out var lnd)) lng = lnd;
         }
 
         /*
@@ -298,14 +399,41 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
     private static string Normalise(string? s) =>
         new((s ?? string.Empty).ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
 
-    private async Task<JsonElement?> GetAsync(string url, string what, CancellationToken cancellationToken)
+    /// <summary>
+    /// One call to Places, with the key on the request rather than in the URL.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE KEY IS ADDED HERE AND NOWHERE ELSE, as the `X-Goog-Api-Key`
+    /// header. Neither caller builds it into a URL, so it cannot reach an
+    /// access log, a proxy log or an exception message that quotes the request
+    /// line. The legacy implementation put it in the query string, which is
+    /// how a key ends up somewhere nobody meant to put it.
+    ///
+    /// ⚠️ THE ERROR SHAPE CHANGED WITH THE API. The legacy endpoints answered
+    /// HTTP 200 and hid the failure in a `status` field; Places (New) answers
+    /// a real status code with `{ "error": { "code", "message", "status" } }`.
+    /// BOTH are read below: the old shape because a project with the legacy
+    /// API still enabled will keep producing it, and this method is the one
+    /// place either can be noticed.
+    /// </remarks>
+    private async Task<JsonElement?> CallAsync(
+        HttpRequestMessage request, string key, string what, CancellationToken cancellationToken)
     {
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
 
-            var doc = await _http.GetFromJsonAsync<JsonDocument>(url, cts.Token).ConfigureAwait(false);
+            using var _request = request;
+            _request.Headers.TryAddWithoutValidation("X-Goog-Api-Key", key);
+
+            using var response = await _http
+                .SendAsync(_request, HttpCompletionOption.ResponseContentRead, cts.Token)
+                .ConfigureAwait(false);
+
+            using var doc = await response.Content
+                .ReadFromJsonAsync<JsonDocument>(cts.Token)
+                .ConfigureAwait(false);
 
             if (doc is null)
             {
@@ -313,6 +441,25 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
             }
 
             var root = doc.RootElement.Clone();
+
+            /*
+              🔴 THE NEW API'S REFUSAL, IN ITS OWN WORDS. Google's message names
+              the actual cause — a legacy endpoint, a restricted key, billing —
+              and it is the difference between "autocomplete returns nothing"
+              and knowing why. It never contains the key.
+            */
+            if (!response.IsSuccessStatusCode)
+            {
+                var message = root.TryGetProperty("error", out var error)
+                    ? Text(error, "message") ?? "(no message)"
+                    : "(no body)";
+
+                _logger.LogWarning(
+                    "Places {What} refused with HTTP {Code}: {Message}. Falling back to the manual cascade.",
+                    what, (int)response.StatusCode, message);
+
+                return null;
+            }
 
             /*
               🔴 GOOGLE RETURNS HTTP 200 WITH AN ERROR STATUS IN THE BODY.
