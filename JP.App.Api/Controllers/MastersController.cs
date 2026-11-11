@@ -178,14 +178,39 @@ public sealed class MastersController : ControllerBase
     /// and cities have carried since 2.47.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// The tehsil a town belongs to — P1's cascade step below the town.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 IT TAKES <c>cityId</c> OR <c>parentId</c>, AND THE SECOND ONE IS NOT
+    /// A CONVENIENCE — IT IS THE ONLY NAME THE CLIENT EVER SENDS.
+    ///
+    /// Angular reaches every dependent master through one helper,
+    /// <c>MasterService.getByParent(key, id)</c>, which spells the id
+    /// <c>parentId</c>. This action was first written taking <c>cityId</c>
+    /// alone, on the reasoning that the generic <c>{masterKey}</c> route would
+    /// still answer <c>?parentId=</c>. It does not: a named route SHADOWS the
+    /// generic one for its own path, so <c>/masters/tehsil-by-city?parentId=1</c>
+    /// arrived HERE with <c>cityId</c> null.
+    ///
+    /// ⚠️ AND THE FAILURE WAS SILENT, WHICH IS WHY IT SURVIVED A GREEN BUILD
+    /// AND A GREEN REGRESSION. An unrecognised parameter is not an error: the
+    /// procedure was asked for the tehsils of no city, answered <c>[]</c> as it
+    /// is designed to, and the form read an empty list as "this town has no
+    /// tehsil level" and hid the control. HTTP 200 the whole way down, nothing
+    /// in any log — the tehsil step simply never appeared, on every town in the
+    /// country. Caught by looking at a walkthrough screenshot that was missing
+    /// a step, not by anything that went red.
+    /// </remarks>
     [HttpGet("tehsil-by-city")]
     [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Client)]
     public async Task<ActionResult<Response<IReadOnlyList<MasterItemDto>>>> GetTehsilForCity(
         [FromQuery] int? cityId,
+        [FromQuery] int? parentId,
         CancellationToken cancellationToken)
     {
         var items = await _service
-            .GetAsync("TEHSIL_BY_CITY", cityId, cancellationToken).ConfigureAwait(false);
+            .GetAsync("TEHSIL_BY_CITY", cityId ?? parentId, cancellationToken).ConfigureAwait(false);
 
         return Ok(ApiResponse.Success(items));
     }
