@@ -15,6 +15,18 @@ public interface ITeacherApplicationService
     Task<PagedResult<JobBrowseItemDto>> BrowseJobsAsync(
         ClaimsPrincipal caller, JobBrowseFilter filter, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The three browse tabs' counts, for their labels. P5.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE SAME GUARDS AS <see cref="BrowseJobsAsync"/>, deliberately. A
+    /// counts endpoint reachable when the list is not would tell somebody how
+    /// many jobs match a teacher's profile without letting them see the jobs —
+    /// which is a smaller leak than the list and still a leak.
+    /// </remarks>
+    Task<JobBrowseCountsDto> GetBrowseCountsAsync(
+        ClaimsPrincipal caller, JobBrowseFilter filter, CancellationToken cancellationToken);
+
     Task<JobForTeacherDto> GetJobAsync(ClaimsPrincipal caller, long jobId, CancellationToken cancellationToken);
 
     /// <summary>One posting, by uid — the shape the public site's funnel holds.</summary>
@@ -100,11 +112,43 @@ internal sealed class TeacherApplicationService : ITeacherApplicationService
 
         EnsureTeacher(caller);
         Require(caller, AppConstants.PermissionCodes.JobView);
+        EnsureKnownMode(filter.Mode);
 
         var (rows, total) = await _applications
             .BrowseJobsAsync(caller.GetUserUid(), filter, cancellationToken).ConfigureAwait(false);
 
         return new PagedResult<JobBrowseItemDto>(rows, total, filter.PageNumber, filter.PageSize);
+    }
+
+    /// <summary>
+    /// The three tab counts. P5.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 IDENTICAL GUARDS TO THE BROWSE ABOVE — teacher account, JOB.VIEW. A
+    /// number derived from a teacher's own profile is still about that teacher,
+    /// and an endpoint that answered it when the list refuses would be a side
+    /// channel onto the same data.
+    /// </para>
+    /// <para>
+    /// ⚠️ NO MODE CHECK HERE, because there is no mode to check: the procedure
+    /// takes none and this response describes all three tabs at once. A
+    /// <c>mode</c> arriving on the query string is simply not forwarded, rather
+    /// than rejected — the client is told the field is ignored by the contract,
+    /// and 400-ing a harmless extra key would break the obvious client
+    /// implementation of "send the same filter object to both endpoints".
+    /// </para>
+    /// </remarks>
+    public async Task<JobBrowseCountsDto> GetBrowseCountsAsync(
+        ClaimsPrincipal caller, JobBrowseFilter filter, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        EnsureTeacher(caller);
+        Require(caller, AppConstants.PermissionCodes.JobView);
+
+        return await _applications
+            .BrowseJobCountsAsync(caller.GetUserUid(), filter, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -358,6 +402,50 @@ internal sealed class TeacherApplicationService : ITeacherApplicationService
         if (!caller.HasPermission(permission))
         {
             throw new ForbiddenException("You do not have permission to do that.");
+        }
+    }
+
+    /// <summary>
+    /// The browse mode, refused here as a 400 rather than reaching SQL.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 IT IS CHECKED IN BOTH PLACES, AND THAT IS THE POINT. The procedure
+    /// RAISES on a mode it does not know, because — in this file's own words
+    /// about paging — a floor that only exists in C# is a floor a direct EXEC
+    /// walks straight past. This check exists so that a client's typo is a
+    /// clean 400 naming the field instead of a 500 out of the database.
+    /// </para>
+    /// <para>
+    /// 🔴 NEITHER PLACE FALLS BACK TO "no mode". A mode that quietly became
+    /// "unmoded" would show the whole job market under a tab labelled "Matches
+    /// your profile" — the same lie an empty <c>int[]</c> set tells when
+    /// <c>[FromQuery]</c> binding fails to fill it, which is why
+    /// <see cref="JobBrowseFilter.SubjectIds"/> is an array and not an
+    /// interface.
+    /// </para>
+    /// <para>
+    /// ⚠️ THE ACCEPTED SPELLINGS ARE THE PROCEDURE'S, NOT A SECOND VOCABULARY.
+    /// It normalises kebab to underscore and uppercases, exactly as
+    /// <c>USP_GetMaster</c> does, so <c>might-like</c>, <c>MIGHT_LIKE</c> and
+    /// <c>Might-Like</c> are all the same mode. Null or blank is the unmoded
+    /// browse that existed before P5 and stays valid.
+    /// </para>
+    /// </remarks>
+    private static void EnsureKnownMode(string? mode)
+    {
+        if (string.IsNullOrWhiteSpace(mode))
+        {
+            return;
+        }
+
+        var normalised = mode.Trim().Replace('-', '_').ToUpperInvariant();
+
+        if (normalised is not ("MATCHES" or "MIGHT_LIKE" or "PREFERRED"))
+        {
+            throw new ValidationAppException(
+                nameof(JobBrowseFilter.Mode),
+                "Mode must be one of: matches, might-like, preferred. Leave it out for an unfiltered browse.");
         }
     }
 }

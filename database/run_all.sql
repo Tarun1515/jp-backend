@@ -345,6 +345,18 @@ GO
 :r $(DbRoot)\jp_mdm\04_procedures\001_approval_submit.sql
 :r $(DbRoot)\jp_mdm\04_procedures\002_approval_action.sql
 :r $(DbRoot)\jp_mdm\04_procedures\003_approval_reads.sql
+
+-- 🔴 USP_GetMaster lives here, and its address cascade NOW NAMES A COLUMN:
+--    the 'TEHSIL_BY_CITY' key reads m_mdm_city.TehsilId, which
+--    01_tables\039_m_mdm_tehsil.sql adds by ALTER (it is registered above, in
+--    the tables section, so this already holds).
+--
+--    ⚠️ IT IS A HARD DEPENDENCY, NOT A SOFT ONE. Deferred name resolution
+--    forgives a missing TABLE; it does NOT forgive a missing COLUMN on a table
+--    that exists — CREATE OR ALTER PROCEDURE fails outright with "Invalid
+--    column name 'TehsilId'". So 039 must run before this line, and a
+--    from-scratch build that reordered the two would fail here rather than at
+--    the first call.
 :r $(DbRoot)\jp_mdm\04_procedures\004_documents_masters.sql
 :r $(DbRoot)\jp_mdm\04_procedures\005_document_lookup.sql
 :r $(DbRoot)\jp_mdm\04_procedures\006_reconciliation.sql
@@ -530,6 +542,22 @@ GO
 -- SCHOOL may see of an application and what a TEACHER may see of the same row
 -- are two different shapes, and one procedure with an audience flag eventually
 -- shows the wrong one to the wrong person.
+--
+-- P4/P5. This file now also carries USP_BrowseJobCounts (the three browse tab
+-- counts) and, at its foot, a BUILD GUARD that compares USP_BrowseJobs' and
+-- USP_BrowseJobCounts' shared classification SQL out of sys.sql_modules.
+--
+-- ⚠️ NO NEW ORDERING CONSTRAINT, AND THAT IS DELIBERATE. The guard's subject is
+-- two procedures created EARLIER IN THIS SAME FILE, so it is judgeable where it
+-- sits and its verdict cannot change with whatever else happens to be deployed
+-- — which is the trap 999_cross_file_guards.sql's header records. It is the
+-- reason the guard is not in 999: a rule about these two procedures belongs
+-- beside them, where somebody editing one will read it.
+--
+-- ⚠️ It reads t_app_teacher_preferred_locations (01_tables\016), which the
+-- tables section above has long since created. Nothing here needs seeded ROWS:
+-- a teacher with no saved locations gets an empty Preferred tab, which is the
+-- correct answer rather than a guard failure.
 :r $(DbRoot)\jp_app\04_procedures\017_application_reads.sql
 
 -- Phase 6A. Depends on fn_ApplicationTransitionAllowed (016), which owns the

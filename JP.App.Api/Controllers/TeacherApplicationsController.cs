@@ -49,9 +49,33 @@ public sealed class TeacherJobsController : ControllerBase
     /// administrative decision about the organisation and it has to reach the
     /// listing, or it is cosmetic.
     /// </para>
+    /// <para>
+    /// 🔴 P5 — <c>mode</c> IS A SERVER-SIDE QUERY VARIANT, NOT A CLIENT RE-SORT.
+    /// <c>matches</c> is the strict match (subjects AND class levels AND
+    /// qualification AND state); <c>might-like</c> is the loose one (ANY
+    /// subject, class level or saved preferred location) MINUS everything
+    /// <c>matches</c> returns; <c>preferred</c> is the teacher's saved
+    /// locations. The subtraction happens in SQL — a client cannot do it,
+    /// because it only ever holds one page of one tab. A job matching nothing
+    /// appears under no mode at all.
+    /// </para>
+    /// <para>
+    /// ⚠️ <c>keyword</c> OVERRIDES <c>mode</c>. While a search is active every
+    /// mode returns the same plain search, and
+    /// <see cref="Counts"/> reports three identical numbers to say so — the
+    /// screen should show one result count rather than three.
+    /// </para>
+    /// <para>
+    /// ⚠️ <c>qualificationIds</c>, <c>subjectIds</c> and <c>classLevelIds</c>
+    /// are REPEATED KEYS (<c>?subjectIds=1&amp;subjectIds=2</c>), bound to
+    /// <c>int[]</c>. An empty set means "do not filter", which is why those
+    /// properties are arrays rather than read-only interfaces — see
+    /// <see cref="JobBrowseFilter.SubjectIds"/>.
+    /// </para>
     /// </remarks>
     [HttpGet]
     [ProducesResponseType(typeof(Response<IReadOnlyList<JobBrowseItemDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Browse(
         [FromQuery] JobBrowseFilter filter, CancellationToken cancellationToken)
@@ -59,6 +83,60 @@ public sealed class TeacherJobsController : ControllerBase
         var page = await _teacher.BrowseJobsAsync(User, filter, cancellationToken).ConfigureAwait(false);
 
         return Ok(ApiResponse.Paged(page.Items, page.TotalRecords));
+    }
+
+    /// <summary>
+    /// The three browse tabs' counts, for their labels. P5.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 BESIDE <see cref="Browse"/> ON THE SAME CONTROLLER, DELIBERATELY. The
+    /// numbers and the rows they describe must not be able to drift apart in
+    /// routing or in authorisation: this action inherits the same
+    /// <c>[Authorize]</c>, and the service applies the same teacher-account
+    /// check and the same JOB.VIEW requirement. A counts endpoint reachable
+    /// when the list is not would report how many jobs match a teacher's
+    /// profile to somebody who may not see the jobs.
+    /// </para>
+    /// <para>
+    /// 🔴 EVERY FIGURE DERIVED, ON EVERY CALL. No counter column exists behind
+    /// these and none may be added. <c>USP_BrowseJobCounts</c> classifies
+    /// candidates with a byte-for-byte identical copy of
+    /// <c>USP_BrowseJobs</c>' SQL, and a build guard fails the build if the two
+    /// ever differ — so a label cannot disagree with the rows under it. That is
+    /// the <c>applicationCount</c> lesson (024) applied before it happens
+    /// again.
+    /// </para>
+    /// <para>
+    /// ⚠️ IT TAKES THE SAME FILTER AS THE BROWSE, AND IGNORES <c>mode</c>. One
+    /// response describes all three tabs, so sending the tab currently open
+    /// would be asking "how many are in each tab, given we are only looking at
+    /// this one". A <c>mode</c> on the query string is ignored rather than
+    /// refused, so a client may send one filter object to both endpoints.
+    /// </para>
+    /// <para>
+    /// ⚠️ THE THREE NUMBERS DO NOT SUM TO A TOTAL. <c>matches</c> and
+    /// <c>mightLike</c> are disjoint; <c>preferred</c> deliberately overlaps
+    /// both, because where somebody will work is a different question from what
+    /// work suits them.
+    /// </para>
+    /// <para>
+    /// ⚠️ ALWAYS AN OBJECT, NEVER A 404. <c>{ matches: 0, mightLike: 0,
+    /// preferred: 0 }</c> is a real measurement — a teacher with an empty
+    /// profile and no saved locations gets their whole open market under
+    /// <c>matches</c> and zeroes elsewhere; one whose filters match nothing gets
+    /// three zeroes. The tab strip has to render either way (2.62).
+    /// </para>
+    /// </remarks>
+    [HttpGet("counts")]
+    [ProducesResponseType(typeof(Response<JobBrowseCountsDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> Counts(
+        [FromQuery] JobBrowseFilter filter, CancellationToken cancellationToken)
+    {
+        var counts = await _teacher.GetBrowseCountsAsync(User, filter, cancellationToken).ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(counts));
     }
 
     /// <summary>

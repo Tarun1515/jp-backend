@@ -148,4 +148,45 @@ public sealed class MastersController : ControllerBase
 
         return Ok(ApiResponse.Success(items));
     }
+
+    /// <summary>
+    /// The tehsil of ONE city — the re-parented cascade's optional fourth step.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 A DISTINCT KEY (<c>TEHSIL_BY_CITY</c>), NOT <c>TEHSIL</c> WITH A
+    /// DIFFERENT PARENT. The address cascade is now State -> District ->
+    /// City/Town -> Tehsil -> Village, so the question has changed from "the
+    /// tehsils of this district" to "the tehsil of this city". A district id
+    /// and a city id are both plain ints and <c>parentId</c> carries no type,
+    /// so teaching the old key to accept either would make every valid district
+    /// id a valid city id: it would return a real, wrong list for a real id,
+    /// with a 200 and nothing in any log. Two questions, two keys.
+    /// </para>
+    /// <para>
+    /// ⚠️ <see cref="GetTehsils"/> above is UNCHANGED and still district-
+    /// parented. It has live callers — <c>GooglePlacesAddressLookupService</c>
+    /// matches a Google-supplied tehsil name within the district it already
+    /// resolved, which is district-parented by nature.
+    /// </para>
+    /// <para>
+    /// ⚠️ AT MOST ONE ROW, AND AN EMPTY LIST IS THE IMPORTANT ANSWER. A city
+    /// with no tehsil, an unknown city id, and no <c>cityId</c> at all each
+    /// answer 200 with <c>[]</c> — never a 404, never an error, never a row
+    /// with a null id. The form reads empty as "this place has no tehsil level"
+    /// and hides the control, which is the same correct degradation districts
+    /// and cities have carried since 2.47.
+    /// </para>
+    /// </remarks>
+    [HttpGet("tehsil-by-city")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Client)]
+    public async Task<ActionResult<Response<IReadOnlyList<MasterItemDto>>>> GetTehsilForCity(
+        [FromQuery] int? cityId,
+        CancellationToken cancellationToken)
+    {
+        var items = await _service
+            .GetAsync("TEHSIL_BY_CITY", cityId, cancellationToken).ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(items));
+    }
 }

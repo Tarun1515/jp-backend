@@ -289,9 +289,26 @@ BEGIN
     /*
       SR-1. The level between district and city.
 
-      ⚠️ ITS PARENT IS THE DISTRICT, not the city — the cascade is
-      State -> District -> Tehsil -> City, and a tehsil is asked for with the
-      district the user has already picked.
+      ⚠️ ITS PARENT IS THE DISTRICT, not the city — the cascade this key was
+      written for is State -> District -> Tehsil -> City, and a tehsil is asked
+      for with the district the user has already picked.
+
+      🔴 THE FORMS HAVE SINCE BEEN RE-PARENTED, AND THIS KEY DID NOT CHANGE.
+      The address cascade is now State -> District -> City -> Tehsil, so the
+      question the forms ask is "what is the tehsil of THIS CITY" — which is
+      the SEPARATE 'TEHSIL_BY_CITY' key below, not this one.
+
+      This branch keeps its district parent untouched because a DISTRICT ID AND
+      A CITY ID ARE BOTH PLAIN INTS and @ParentId cannot tell them apart. Teach
+      this branch to accept either and every valid district id becomes a valid
+      city id and vice versa — the lookup would return a real, wrong list for a
+      real id, with a 200 and nothing in any log. That is the 2.49 failure mode
+      (a silently wrong master list, found weeks later by a human noticing a
+      blank dropdown) with a sharper edge, because this one would not be blank.
+
+      ⚠️ AND IT IS NOT DEAD WEIGHT. GooglePlacesAddressLookupService resolves a
+      Google-supplied tehsil NAME within the district it already matched, which
+      is district-parented by nature, and /api/masters/tehsils still serves it.
 
       Sub-tehsils are in this list too, by DisplayOrder (full tehsils first,
       sub-tehsils from 1000). A person typing their address knows the name of
@@ -331,6 +348,61 @@ BEGIN
             WHERE Is_Deleted = 0 AND Is_Active = 1 AND (@ParentId IS NULL OR DistrictId = @ParentId)
             ORDER BY DisplayOrder, Name;
     END
+
+    /*
+      🔴 THE TEHSIL OF ONE CITY — A DISTINCT KEY, NOT AN OVERLOAD OF 'TEHSIL'.
+
+      The address cascade was re-parented: district is now the parent of CITY
+      and city is the parent of TEHSIL, giving
+      State -> District -> City/Town -> Tehsil/Sub-tehsil (optional) -> Village.
+      So the forms need to ask "what is the tehsil of THIS city", and
+      m_mdm_city.TehsilId has held that answer since SR-1 without anything
+      exposing it.
+
+      ⚠️ WHY THIS IS NOT @ParentId ON THE 'TEHSIL' KEY. A district id and a
+      city id are both plain ints, and @ParentId carries no type. The 'CITY'
+      branch above gets away with two parent meanings only because it RESOLVES
+      which it was handed — it asks whether the id exists as a tehsil, which is
+      a fact independent of how ids are allocated. The same trick does not work
+      here: a tehsil list parented by "district or city" would have to guess,
+      and a guess that is wrong returns a REAL list for a REAL id with a 200
+      and nothing in any log. A blank dropdown took weeks to spot in 2.49; a
+      plausible-but-wrong one would never be spotted at all.
+
+      So the two questions get two keys. 'TEHSIL' keeps its district parent and
+      its existing callers exactly as they were.
+
+      ---------------------------------------------------------------------
+      ⚠️ AT MOST ONE ROW, AND A LIST SHAPE ANYWAY
+      ---------------------------------------------------------------------
+      m_mdm_city.TehsilId is a single nullable FK, so this answers with one row
+      or none. It stays a list because the masters endpoint's contract is a
+      list, and because ZERO ROWS is the load-bearing case: a city whose
+      TehsilId is NULL has no tehsil level, the INNER JOIN below returns
+      nothing, and the form HIDES the control. That is the same correct
+      degradation districts and cities have carried since 2.47 — empty is an
+      answer, not an error, and must never be a null row either, because a row
+      with a null id is a dropdown entry nobody can select.
+
+      ⚠️ @ParentId NULL RETURNS NOTHING, unlike 'TEHSIL'. "The tehsil of no
+      city" is not a question. Answering it with every city/tehsil pair would
+      repeat the same TehsilId under many parents, and a dropdown built from
+      that would show duplicates — wrong in a way a reviewer would not notice.
+
+      ⚠️ ParentId ECHOES THE CITY IT WAS ASKED BY, not the tehsil's DistrictId,
+      exactly as the 'CITY' branch echoes whichever parent it was given. The
+      field means "the cascade step this row hangs off", and under the new
+      cascade that step is the city.
+    */
+    ELSE IF @MasterCode = 'TEHSIL_BY_CITY'
+        SELECT t.TehsilId AS Id, t.Code, t.Name, t.DisplayOrder, c.CityId AS ParentId
+        FROM dbo.m_mdm_city c
+            INNER JOIN dbo.m_mdm_tehsil t ON t.TehsilId = c.TehsilId
+        WHERE @ParentId IS NOT NULL
+          AND c.CityId     = @ParentId
+          AND c.Is_Deleted = 0 AND c.Is_Active = 1
+          AND t.Is_Deleted = 0 AND t.Is_Active = 1
+        ORDER BY t.DisplayOrder, t.Name;
 
     ELSE IF @MasterCode = 'BOARD'
         SELECT BoardId AS Id, Code, Name, DisplayOrder FROM dbo.m_mdm_board

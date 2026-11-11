@@ -83,6 +83,27 @@ internal interface IApplicationRepository
     Task<(IReadOnlyList<JobBrowseItemDto> Rows, long Total)> BrowseJobsAsync(
         Guid? userUid, JobBrowseFilter filter, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The three browse tabs' counts, in one row. P5.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 DERIVED FROM THE SAME PREDICATE THE LISTS USE.
+    /// <c>USP_BrowseJobCounts</c> carries a byte-for-byte identical copy of
+    /// <c>USP_BrowseJobs</c>' classification SQL, and a build guard in
+    /// 017_application_reads.sql fails the build if the two ever differ. No
+    /// counter column exists and none may be added — see
+    /// <see cref="JobBrowseCountsDto"/>.
+    /// </para>
+    /// <para>
+    /// ⚠️ <c>filter.Mode</c> IS NOT SENT. The procedure has no such parameter:
+    /// one response describes all three tabs, so narrowing it by the tab
+    /// currently open would be incoherent.
+    /// </para>
+    /// </remarks>
+    Task<JobBrowseCountsDto> BrowseJobCountsAsync(
+        Guid? userUid, JobBrowseFilter filter, CancellationToken cancellationToken);
+
     Task<JobForTeacherDto?> GetJobForTeacherAsync(
         long jobId, Guid? userUid, CancellationToken cancellationToken);
 
@@ -256,34 +277,76 @@ internal sealed class ApplicationRepository : BaseRepository, IApplicationReposi
     // TEACHER SIDE
     // -----------------------------------------------------------------------
 
-    public Task<(IReadOnlyList<JobBrowseItemDto> Rows, long Total)> BrowseJobsAsync(
-        Guid? userUid, JobBrowseFilter filter, CancellationToken cancellationToken)
+    /// <summary>
+    /// Every filter BOTH browse procedures take — no mode, no paging.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 ONE MAPPING, SO THE COUNTS CANNOT BE COMPUTED FROM A DIFFERENT FILTER
+    /// THAN THE LIST. The SQL side keeps its two classification blocks in step
+    /// with a build guard; this is the C# half of the same rule. A second
+    /// hand-written copy of these fourteen lines is how "Matches (12)" starts
+    /// sitting above eleven rows, with nothing erroring.
+    /// </para>
+    /// <para>
+    /// ⚠️ <c>Mode</c> AND PAGING ARE DELIBERATELY ABSENT. Only
+    /// <c>USP_BrowseJobs</c> has those parameters, and it adds them itself.
+    /// </para>
+    /// </remarks>
+    private static DynamicParameters BrowseFilterParameters(Guid? userUid, JobBrowseFilter filter)
     {
-        ArgumentNullException.ThrowIfNull(filter);
-
         var p = new DynamicParameters();
         p.Add("@UserUid", userUid, DbType.Guid);
         p.Add("@Search", filter.Search, DbType.String, size: 150);
+        p.Add("@Keyword", filter.Keyword, DbType.String, size: 150);
         p.Add("@SubjectId", filter.SubjectId, DbType.Int32);
         p.Add("@DesignationId", filter.DesignationId, DbType.Int32);
         p.Add("@EmploymentTypeId", filter.EmploymentTypeId, DbType.Int32);
         p.Add("@CityId", filter.CityId, DbType.Int32);
         p.Add("@StateId", filter.StateId, DbType.Int32);
         p.Add("@MinSalary", filter.MinSalary, DbType.Decimal);
-        p.Add("@PageNumber", filter.PageNumber, DbType.Int32);
-        p.Add("@PageSize", filter.PageSize, DbType.Int32);
 
         /*
-          SR-5. The profile-matched default: the teacher's own subjects and
-          class levels, as sets.
+          SR-5 / P4. The profile-matched default: the teacher's own subjects,
+          class levels and qualifications, as sets.
 
           ⚠️ AN EMPTY TABLE IS SENT WHEN THE CALLER GAVE NOTHING, and the
           procedure reads empty as "not filtering". That keeps one code path
           instead of two, and means a browse with no sets behaves exactly as it
-          did before this parameter existed.
+          did before these parameters existed.
         */
         p.Add("@SubjectIds", IdList(filter.SubjectIds).AsTableValuedParameter("dbo.IntIdList"));
         p.Add("@ClassLevelIds", IdList(filter.ClassLevelIds).AsTableValuedParameter("dbo.IntIdList"));
+        p.Add("@QualificationIds", IdList(filter.QualificationIds).AsTableValuedParameter("dbo.IntIdList"));
+
+        return p;
+    }
+
+    public Task<(IReadOnlyList<JobBrowseItemDto> Rows, long Total)> BrowseJobsAsync(
+        Guid? userUid, JobBrowseFilter filter, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        var p = BrowseFilterParameters(userUid, filter);
+
+        /*
+          🔴 THE MODE AND THE PAGE ARE THIS CALL'S ALONE. USP_BrowseJobCounts
+          has no @Mode parameter at all, which is why it cannot be handed one by
+          accident.
+
+          ⚠️ The mode is passed THROUGH, not translated. The procedure
+          normalises 'might-like' to 'MIGHT_LIKE' itself and raises on anything
+          it does not know; a C# translation table here would be a second list
+          to drift out of step with the procedure's own (2.48's rule, the same
+          one that keeps master keys out of MasterService).
+        */
+        // ⚠️ AnsiString, because @Mode is varchar(16) — the same binding
+        // MasterRepository uses for @MasterCode, and for the same reason: a
+        // DbType.String would send nvarchar and make SQL Server convert on
+        // every call for a value that is three ASCII words.
+        p.Add("@Mode", filter.Mode, DbType.AnsiString, size: 16);
+        p.Add("@PageNumber", filter.PageNumber, DbType.Int32);
+        p.Add("@PageSize", filter.PageSize, DbType.Int32);
 
         return QueryMultipleAsync<(IReadOnlyList<JobBrowseItemDto>, long)>(
             "USP_BrowseJobs",
@@ -295,6 +358,26 @@ internal sealed class ApplicationRepository : BaseRepository, IApplicationReposi
                 return (rows, total);
             },
             p, cancellationToken);
+    }
+
+    public async Task<JobBrowseCountsDto> BrowseJobCountsAsync(
+        Guid? userUid, JobBrowseFilter filter, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        var p = BrowseFilterParameters(userUid, filter);
+
+        /*
+          ⚠️ QueryFirstOrDefault AND A NEW INSTANCE, NOT QuerySingle. The
+          procedure aggregates, so it always returns one row — but
+          QuerySingleAsync turns "no row" into a 404, and a 404 on the tab
+          counts would blank a tab strip that has to render whatever the
+          numbers are. Three zeroes is a measurement; an absent object is not
+          (2.62).
+        */
+        return await QueryFirstOrDefaultAsync<JobBrowseCountsDto>(
+                   "USP_BrowseJobCounts", p, cancellationToken).ConfigureAwait(false)
+               ?? new JobBrowseCountsDto();
     }
 
     public Task<JobForTeacherDto?> GetJobForTeacherAsync(

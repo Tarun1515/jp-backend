@@ -389,6 +389,131 @@ public sealed class JobBrowseFilter : PagedRequest
     /// <summary>The teacher's own class levels, for the profile-matched default.</summary>
     /// <remarks>See <see cref="SubjectIds"/> — same reasoning, same binding note.</remarks>
     public int[]? ClassLevelIds { get; set; }
+
+    /// <summary>The teacher's own qualification(s) — P4's addition to the match.</summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 <c>int[]</c>, NOT <c>IReadOnlyList&lt;int&gt;</c>, for exactly the
+    /// reason <see cref="SubjectIds"/> gives: this type is bound
+    /// <c>[FromQuery]</c>, ASP.NET Core's collection binder has to create and
+    /// fill the instance itself, and it cannot do that for a read-only
+    /// interface. The values would arrive SILENTLY EMPTY — and an empty set
+    /// means "do not filter", so the screen would show every job while claiming
+    /// to show matched ones. Any new set field on this type takes the same
+    /// shape.
+    /// </para>
+    /// <para>
+    /// ⚠️ A SET, THOUGH THE JOB SIDE IS SINGULAR. A job's requirement is one
+    /// nullable column (<c>t_app_jobs.QualificationId</c>); the TEACHER side is
+    /// what may grow, because somebody holding a B.Ed and an M.A. has two. A
+    /// scalar here would have to be widened later under live callers, which is
+    /// the change <see cref="SubjectId"/> could not make.
+    /// </para>
+    /// <para>
+    /// ⚠️ A JOB THAT NAMES NO QUALIFICATION MATCHES ANY SET. An unstated
+    /// requirement is not an unmet one, and the procedure says so explicitly —
+    /// the obvious <c>IN</c> would hide every such posting the moment a teacher
+    /// filtered on their own degree, because NULL never satisfies <c>IN</c>.
+    /// </para>
+    /// </remarks>
+    public int[]? QualificationIds { get; set; }
+
+    /// <summary>
+    /// Free text over job title and school name. P5.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ IT IS THE SAME PREDICATE AS <see cref="PagedRequest.Search"/>, NOT A
+    /// SECOND ONE. <c>Search</c> has run this exact LIKE since Phase 5;
+    /// <c>keyword</c> is the name the client contract asked for. The procedure
+    /// coalesces the two into one local and has a single search predicate, so
+    /// there is nothing for two spellings to drift apart over. Both are
+    /// accepted; sending both uses this one.
+    /// </para>
+    /// <para>
+    /// 🔴 A KEYWORD OVERRIDES <see cref="Mode"/>. When somebody types a search
+    /// the tabs stop being the question, so every mode returns the same plain
+    /// search and all three counts come back equal. The screen should show one
+    /// result count while a keyword is active rather than three identical ones.
+    /// </para>
+    /// </remarks>
+    public string? Keyword { get; set; }
+
+    /// <summary>
+    /// Which of the three browse tabs this is: <c>matches</c>,
+    /// <c>might-like</c> or <c>preferred</c>. Null is the unmoded browse.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 EACH TAB IS A SERVER-SIDE QUERY VARIANT, NOT A RE-SORT OF ONE RESULT
+    /// SET. <c>MIGHT_LIKE</c> is defined as "any of your subjects, class levels
+    /// or saved locations MINUS everything MATCHES returns", and that
+    /// subtraction is done in SQL — a client could not do it, because it sees
+    /// one page of one tab and cannot know what the other tab's later pages
+    /// hold.
+    /// </para>
+    /// <para>
+    /// ⚠️ A CODE, NOT AN INT. The value travels through a query string, a log
+    /// line and a profiler trace, and <c>might-like</c> says what it is in all
+    /// three. Kebab or underscore, any case: the procedure normalises exactly
+    /// as <c>USP_GetMaster</c> does.
+    /// </para>
+    /// <para>
+    /// 🔴 AN UNRECOGNISED MODE IS REFUSED — 400 from the service, and the
+    /// procedure raises as well if it is ever reached directly. It does NOT
+    /// fall back to "no mode", because that would put the entire job market
+    /// under a tab labelled "Matches your profile".
+    /// </para>
+    /// <para>
+    /// ⚠️ THE COUNTS ENDPOINT IGNORES THIS FIELD, and its procedure has no such
+    /// parameter. One response describes all three tabs; narrowing it by the tab
+    /// currently open would be asking how many are in each tab given that we
+    /// are only looking at one of them.
+    /// </para>
+    /// </remarks>
+    public string? Mode { get; set; }
+}
+
+/// <summary>
+/// The three browse tabs' counts, for the labels — "Matches your profile (12)".
+/// </summary>
+/// <remarks>
+/// <para>
+/// 🔴 EVERY FIGURE DERIVED, ON EVERY CALL. There is no counter column behind
+/// any of these and there must never be one. This project has already shipped
+/// one maintained tally that drifted from the rows underneath it —
+/// <c>t_app_jobs.ApplicationCount</c>, which is permanently zero and never
+/// written (024) — and a second would fail the same silent way.
+/// </para>
+/// <para>
+/// 🔴 THEY CANNOT DISAGREE WITH THE LISTS. <c>USP_BrowseJobCounts</c> and
+/// <c>USP_BrowseJobs</c> classify candidates with a byte-for-byte identical
+/// block of SQL, and a BUILD GUARD compares the two procedure definitions and
+/// fails the build if they ever differ. Each count is the sum of the very
+/// column the list filters its page by.
+/// </para>
+/// <para>
+/// ⚠️ THESE DO NOT SUM TO A TOTAL. <see cref="Matches"/> and
+/// <see cref="MightLike"/> are disjoint by construction;
+/// <see cref="Preferred"/> deliberately overlaps both, because "where am I
+/// willing to work" is a different question from "what work suits me". A screen
+/// that adds them up is wrong.
+/// </para>
+/// <para>
+/// ⚠️ THREE ZEROES IS A REAL ANSWER and arrives as an object, never as a 404 or
+/// a null — the tab strip has to render either way.
+/// </para>
+/// </remarks>
+public sealed class JobBrowseCountsDto
+{
+    /// <summary>Subjects AND class levels AND qualification AND state. All four.</summary>
+    public int Matches { get; set; }
+
+    /// <summary>Any subject, class level or saved location — minus everything in <see cref="Matches"/>.</summary>
+    public int MightLike { get; set; }
+
+    /// <summary>Jobs in the teacher's own saved preferred locations.</summary>
+    public int Preferred { get; set; }
 }
 
 /// <summary>A job as it appears in the teacher's browse.</summary>
