@@ -247,6 +247,28 @@ public sealed record SaveBranchRequest
     public string? Pincode { get; init; }
     public decimal? Latitude { get; init; }
     public decimal? Longitude { get; init; }
+
+    /// <summary>
+    /// Where the stated address geocoded to — NOT where the pin is.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 A DIFFERENT FACT FROM <see cref="Latitude"/>, AND THE CAMPUS-PIN
+    /// REVIEW QUEUE IS MEASURED BETWEEN THEM. The pin is where the school says
+    /// the gate is; this is where the provider put the address they typed. A
+    /// caller that fills one from the other makes every campus exactly 0 km
+    /// from itself — a queue that is empty for the wrong reason, which is the
+    /// worst outcome available, because an empty queue reads as "nothing to
+    /// review".
+    ///
+    /// ⚠️ ONLY THE ADDRESS LOOKUP SENDS THESE. A plain campus edit leaves them
+    /// null and the procedure keeps whatever is stored: moving a pin does not
+    /// un-geocode an address.
+    /// </remarks>
+    public decimal? GeocodedLatitude { get; init; }
+
+    /// <inheritdoc cref="GeocodedLatitude"/>
+    public decimal? GeocodedLongitude { get; init; }
+
     public string? ContactPerson { get; init; }
     public string? ContactEmail { get; init; }
     public string? ContactMobile { get; init; }

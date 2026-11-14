@@ -312,6 +312,40 @@ public static class AppConstants
         public const string ModerationReport = "MODERATION.REPORT";
 
         /// <summary>
+        /// 🔴 NEW IN SR-2. Correcting the map pin a school set for its own
+        /// campus, or recording that a large distance from its stated address
+        /// is correct.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// 🔴 NOT <see cref="VerificationSchool"/>, and that was the first
+        /// choice. "Is this school where it says it is?" reads like an identity
+        /// question, and the desk sits beside the verification queue in an
+        /// admin's day. It was rejected on what the permission GATES: a
+        /// verification is settled ONCE, before a school's first job goes live,
+        /// whereas a campus pin is corrected years later about a campus that did
+        /// not exist when the school was approved. Granting this to
+        /// VERIFICATION.SCHOOL would hand every verifier a permanent write on
+        /// every school's location data.
+        /// </para>
+        /// <para>
+        /// 🔴 NOT <see cref="ModerationReport"/> either — 008's ENQUIRY.MANAGE
+        /// argument, repeated. Triaging what the public sent in and relocating
+        /// a campus teachers search on are different acts, and one permission
+        /// for both means whoever works the reports queue can move any campus
+        /// on the platform.
+        /// </para>
+        /// <para>
+        /// 🔒 Seeded to SUPER_ADMIN and MODERATION_ADMIN
+        /// (jp_sso/03_seed/009), which asserts that CLOSED SET and names
+        /// VERIFICATION_ADMIN explicitly as the grant somebody will add by
+        /// mistake. The admin sidebar row for /moderation/campus-pins requires
+        /// this code, so the menu and the server refuse together.
+        /// </para>
+        /// </remarks>
+        public const string ModerationCampusPin = "MODERATION.CAMPUS_PIN";
+
+        /// <summary>
         /// 🔴 NEW IN 7B, rather than reusing <see cref="ModerationReport"/>.
         /// </summary>
         /// <remarks>

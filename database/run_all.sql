@@ -152,6 +152,19 @@ GO
 --    ENQUIRY.MANAGE" — on this machine the order never mattered, because
 --    7B deployed both by hand. Same reason 006 is here.
 :r $(DbRoot)\jp_sso\03_seed\008_seed_moderation_desk.sql
+
+-- SR-2. MODERATION.CAMPUS_PIN — who may correct the map pin a school set for
+-- its own campus.
+-- 🔴 BEFORE 005_seed_menus, for the SAME reason 008 and 006 are: 005 asserts
+--    that every PermissionCode its menu rows name exists, and the new
+--    "Campus pins" row names this one. Listed after 005 the whole build fails
+--    with "unknown PermissionCode(s): MODERATION.CAMPUS_PIN" — which is
+--    exactly the failure 7B hit and recorded two lines above.
+-- ⚠️ It only needs 002_seed_roles (SUPER_ADMIN, MODERATION_ADMIN) and the
+--    modules from 001; it does NOT depend on 003/004, because it MERGEs its
+--    own permission row rather than amending theirs.
+:r $(DbRoot)\jp_sso\03_seed\009_seed_campus_pin_permission.sql
+
 -- Menus AFTER permissions: the seed resolves PermissionCode -> PermissionId
 -- and aborts on an unknown code, because a typo there would silently make an
 -- item visible to everyone rather than to nobody.
@@ -472,6 +485,38 @@ GO
 -- provisioning silently dropped (found by SR-0's field matrix).
 :r $(DbRoot)\jp_app\01_tables\036_alter_address_columns.sql
 
+-- SR-2. The PERSISTED geography column on a campus's pin, and its spatial
+-- index.
+--
+-- 🔴 AFTER 036, AND THE ORDER IS LOAD-BEARING IN BOTH DIRECTIONS:
+--    · 006 created t_app_school_branches.Latitude/Longitude, so the computed
+--      column's source columns must already exist — anything earlier than 006
+--      fails with "Invalid column name 'Latitude'".
+--    · 036 carries the guard that EVERY Latitude/Longitude in jp_app is
+--      decimal(9,6). 037's expression CASTs those two columns to float against
+--      exactly that shape, so 036's guard is what makes 037's cast safe, and a
+--      database where it has not run yet is one where the cast is unverified.
+--      037 repeats the check narrowly for its own two columns; 036 is the
+--      platform-wide one and should fail first.
+--
+-- ⚠️ IT IS A TABLE FILE AND jp_app HAS NO 02_indexes FOLDER — indexes live
+--    beside the table they are on (006, 003, 034 all do this), so the spatial
+--    index is in the same file as the column it indexes. Splitting them would
+--    put a CREATE SPATIAL INDEX somewhere that could run before the PERSISTED
+--    column it requires exists.
+:r $(DbRoot)\jp_app\01_tables\037_alter_branches_geopoint.sql
+
+-- SR-2. The distance guard's storage: the ANCHOR columns (the geocode of the
+-- address a school stated — three columns this pass ADDS, because the product
+-- stored no such point) and the append-only pin-review log.
+--
+-- 🔴 AFTER 037, because its own guard compares the anchor's precision against
+--    the pin's and its index INCLUDEs columns 036 added. It does NOT depend on
+--    037's computed column existing — but keeping them adjacent and ordered
+--    means a reader finds the whole feature's schema in two consecutive files.
+-- ⚠️ BEFORE any procedure: 04_procedures\028 reads both.
+:r $(DbRoot)\jp_app\01_tables\038_t_app_branch_pin_review.sql
+
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
 -- shapes the schema. It is listed here so a database rebuilt from scratch ends
@@ -600,6 +645,24 @@ GO
 
 -- Phase 8-0. Admin analytics over jp_app: every figure derived, no counters.
 :r $(DbRoot)\jp_app\04_procedures\027_admin_analytics.sql
+
+-- SR-2. The campus-pin desk: the distance guard's read, the two acting
+-- procedures and the school's own trail.
+--
+-- 🔴 AFTER 01_tables\037 AND 038 — it reads the PERSISTED GeoPoint column, the
+--    three anchor columns and t_app_branch_pin_review_log. All three are in the
+--    tables section far above, so no new ordering constraint arises here; the
+--    dependency is stated because a reader of this line should not have to go
+--    and find it.
+-- ⚠️ IT DOES NOT DEPEND ON 025. The two files are deliberate siblings — 028
+--    follows 025's shapes almost line for line (append-only log, remarks
+--    required, log row before the overwrite, is_updated guards) and references
+--    none of its objects. Placed after it so the pair reads in order.
+-- ⚠️ ITS OWN GUARDS ARE NARROW BY DESIGN: their subject is these procedures, so
+--    they sit in the file (999's header says why). The one whose subject is
+--    EVERY procedure — "nothing but the two acting procedures may write the
+--    pin-review log" — is in 999, below.
+:r $(DbRoot)\jp_app\04_procedures\028_branch_pin_review.sql
 
 -- Phase 8A. LAST, deliberately: guards whose subject is EVERY procedure,
 -- which can only be judged once every procedure exists. See the file header

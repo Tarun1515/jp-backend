@@ -88,6 +88,47 @@ GO
   Returns the RequestId and the EntityUid, both of which the client needs: the
   first to upload documents against, the second so a resumed draft keeps
   identifying the same school rather than inventing a new one each save.
+
+  ---------------------------------------------------------------------------
+  🔴 SR-3's SIX COMPULSORY FIELDS ARE **NOT** ENFORCED HERE, AND THAT IS THE
+  DECISION — NOT AN OVERSIGHT
+  ---------------------------------------------------------------------------
+  School type, board, affiliation number, registration number, PAN and
+  established year are required to SUBMIT a registration.
+  USP_SubmitRegistrationDraft refuses each of them by name, and so does
+  USP_SubmitApprovalRequest. This procedure refuses none of them.
+
+  Because of when it is called. Read the first line of this header again: ON
+  EVERY STEP CHANGE. The PAN is asked for on a later step than the school
+  name, so enforcing a PAN here would make it impossible to save step one at
+  all — and this procedure is the only thing standing between a half-filled
+  six-step form and a school that closes the tab and does not come back. That
+  is the exact failure the draft mechanism exists to prevent, and it would be
+  caused by the validation meant to improve the data.
+
+  ⚠️ IT WOULD ALSO BE UNRECOVERABLE IN A PARTICULAR WAY. The UPDATE below is a
+  blanket overwrite — the client sends the whole form every time — so a refusal
+  here does not reject one field, it discards the whole save. A school that
+  typed three paragraphs about itself on step five and had not yet reached the
+  PAN box would lose all of it, and the screen would say the PAN is required.
+
+  🔴 SO THE RULE IS: A DRAFT ACCEPTS ANYTHING; A SUBMIT ACCEPTS ONLY WHAT IS
+  COMPLETE. A draft is a record of what somebody has typed SO FAR, and the
+  honest shape for "so far" is NULL. Submit is the moment the school asserts
+  the form is finished, which is the only moment a missing field is a mistake
+  rather than a step not yet reached.
+
+  ⚠️ THE ONE THING THAT IS STILL REFUSED HERE IS AN UNKNOWN PLAN CODE, and the
+  distinction is worth stating because it looks inconsistent. An absent field
+  is incompleteness; a plan code that matches no plan is a value the client
+  INVENTED, and storing it would be the silent-drop failure SR-0 found with
+  PrincipalMobile. Nothing legitimate sends it.
+
+  ⚠️ AND THE COST, STATED: a school can fill a draft with six blanks and only
+  discover at submit that it cannot finish. The client's step validation is
+  what makes that rare; the server's job is to make it impossible to get
+  further, which is what submit does. The alternative — telling them at step
+  one — costs the draft mechanism its entire purpose.
 ==============================================================================*/
 CREATE OR ALTER PROCEDURE dbo.USP_SaveSchoolRegistrationDraft
     @RequestorUserId    bigint,
@@ -411,6 +452,38 @@ BEGIN
         INNER JOIN dbo.m_mdm_request_types rt ON rt.RequestTypeId = r.RequestTypeId
     WHERE r.RequestId = @RequestId AND r.Is_Deleted = 0;
 
+    /*
+      SR-3. The six fields the validation chain below now requires, read once
+      into variables rather than as six EXISTS subqueries against the same
+      indexed row.
+
+      ⚠️ READ UNCONDITIONALLY, before the chain, and it costs one clustered-key
+      seek. The alternative — reading it only once the chain has decided the
+      draft is real — would mean six near-identical subqueries each repeating
+      "RequestId = @RequestId AND Is_Deleted = 0", which is six places for that
+      predicate to drift.
+    */
+    DECLARE @SchoolName        nvarchar(200) = NULL,
+            @SchoolTypeId      int           = NULL,
+            @BoardId           int           = NULL,
+            @AffiliationNumber varchar(50)   = NULL,
+            @RegistrationNo    varchar(50)   = NULL,
+            @PanNumber         varchar(10)   = NULL,
+            @EstablishedYear   smallint      = NULL,
+            @HasDetail         bit           = 0;
+
+    SELECT @SchoolName        = d.SchoolName,
+           @SchoolTypeId      = d.SchoolTypeId,
+           @BoardId           = d.BoardId,
+           @AffiliationNumber = d.AffiliationNumber,
+           @RegistrationNo    = d.RegistrationNo,
+           @PanNumber         = d.PanNumber,
+           @EstablishedYear   = d.EstablishedYear,
+           @HasDetail         = 1
+      FROM dbo.t_mdm_school_registration_details d
+     WHERE d.RequestId = @RequestId
+       AND d.Is_Deleted = 0;
+
     IF @RequestTypeId IS NULL
         SELECT @Code = 'NOT_FOUND', @Message = N'That draft was not found.';
 
@@ -428,10 +501,90 @@ BEGIN
 
     -- The name is the one field with no sensible empty value: a request the
     -- admin cannot identify is one that sits in the queue being skipped.
-    ELSE IF NOT EXISTS (SELECT 1 FROM dbo.t_mdm_school_registration_details
-                        WHERE RequestId = @RequestId AND Is_Deleted = 0
-                          AND ISNULL(SchoolName, N'') <> N'')
+    ELSE IF @HasDetail = 0 OR ISNULL(@SchoolName, N'') = N''
         SELECT @Code = 'VALIDATION_FAILED', @Message = N'The school name is required.';
+
+    /*==========================================================================
+      SR-3 — SIX REGISTRATION FIELDS BECOME COMPULSORY.
+
+      School type · Board · Affiliation number · Registration number · PAN ·
+      Established year.
+
+      ------------------------------------------------------------------------
+      🔴 THIS IS THE PATH THE PRODUCT ACTUALLY USES, AND IT HAD ONE CHECK
+      ------------------------------------------------------------------------
+      The six rules are specified against "the submit path", which
+      001_approval_submit.sql's USP_SubmitApprovalRequest is — the form posted
+      straight through. But the registration form ships as a DRAFT: six steps
+      plus documents, saved on every step change, promoted to Pending here.
+      ApprovalRepository calls both.
+
+      So enforcing in 001 alone would have left every message there unreachable
+      in production: a school could save a draft with all six blank and submit
+      it through this procedure, which checked the school name and nothing
+      else. Measured, not assumed — the chain above is what it was.
+
+      ⚠️ THE SAME SIX RULES, THE SAME SIX MESSAGES, WORD FOR WORD as 001's. Two
+      submit paths answering the same refusal differently is worse than either
+      of them being wrong, because the client's copy can only match one.
+
+      ⚠️ AGAINST THE STORED ROW, NOT AGAINST PARAMETERS. This procedure takes
+      a RequestId; the values were written by the draft saves. That is also why
+      this is the right place for the rules rather than the draft save — see
+      USP_SaveSchoolRegistrationDraft's header note.
+
+      ⚠️ SCOPED TO THE SCHOOL REQUEST TYPES. The detail row only exists for 1
+      and 3, and a teacher draft reaching this procedure must not be refused
+      for lacking a board.
+    ==========================================================================*/
+    ELSE IF @RequestTypeId IN (1, 3) AND ISNULL(@SchoolTypeId, 0) <= 0
+        SELECT @Code = 'VALIDATION_FAILED', @Message = N'The school type is required.';
+    ELSE IF @RequestTypeId IN (1, 3) AND ISNULL(@BoardId, 0) <= 0
+        SELECT @Code = 'VALIDATION_FAILED', @Message = N'The board is required.';
+    ELSE IF @RequestTypeId IN (1, 3) AND LEN(LTRIM(RTRIM(ISNULL(@AffiliationNumber, '')))) = 0
+        SELECT @Code = 'VALIDATION_FAILED', @Message = N'The affiliation number is required.';
+    ELSE IF @RequestTypeId IN (1, 3) AND LEN(LTRIM(RTRIM(ISNULL(@RegistrationNo, '')))) = 0
+        SELECT @Code = 'VALIDATION_FAILED', @Message = N'The registration number is required.';
+    ELSE IF @RequestTypeId IN (1, 3) AND LEN(LTRIM(RTRIM(ISNULL(@PanNumber, '')))) = 0
+        SELECT @Code = 'VALIDATION_FAILED', @Message = N'The PAN is required.';
+
+    /*
+      🔴 FIVE LETTERS, FOUR DIGITS, ONE LETTER — AAAAA9999A.
+
+      ⚠️ UPPER() FIRST, THEN A BIN2 PATTERN, for 001's reason: under the
+      database's default CI collation '[A-Z]' matches lowercase too, so the
+      pattern alone would accept 'abcde1234f'. Ten single-character classes
+      and no wildcard also fix the LENGTH at ten.
+
+      ⚠️ CHECKED AT SUBMIT EVEN THOUGH THE DRAFT SAVE STORED IT. The column is
+      varchar(10) and accepts any ten characters; ApprovalService uppercases
+      and checks the format on the way IN, but a draft saved before this rule
+      existed — or by anything that bypassed the service — has whatever is
+      there. Submit is the gate, so submit re-reads it.
+    */
+    ELSE IF @RequestTypeId IN (1, 3)
+        AND UPPER(LTRIM(RTRIM(@PanNumber))) COLLATE Latin1_General_BIN2
+            NOT LIKE '[A-Z][A-Z][A-Z][A-Z][A-Z][0-9][0-9][0-9][0-9][A-Z]'
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'That does not look like a PAN. It is ten characters: five letters, four digits, then a letter — for example ABCDE1234F.';
+
+    ELSE IF @RequestTypeId IN (1, 3) AND @EstablishedYear IS NULL
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The year the school was established is required.';
+
+    /*
+      🔴 1800 TO THIS YEAR, AND "THIS YEAR" IS THE IST YEAR (2.28).
+
+      dbo.fn_IstToday() — the helper this procedure already uses to number the
+      request below, for the same reason. YEAR(GETUTCDATE()) would refuse a
+      school founded this year for the first five and a half hours of every
+      January.
+    */
+    ELSE IF @RequestTypeId IN (1, 3)
+        AND (@EstablishedYear < 1800 OR @EstablishedYear > YEAR(dbo.fn_IstToday()))
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The year the school was established must be between 1800 and '
+                        + CAST(YEAR(dbo.fn_IstToday()) AS nvarchar(4)) + N'.';
 
     ELSE IF EXISTS (SELECT 1 FROM dbo.t_mdm_approval_requests
                     WHERE RequestTypeId = @RequestTypeId AND EntityUid = @EntityUid

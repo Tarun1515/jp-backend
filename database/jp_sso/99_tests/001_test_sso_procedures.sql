@@ -163,35 +163,84 @@ SELECT 'registration', 'exactly one current credential created',
        CASE WHEN COUNT(*) = 1 THEN 1 ELSE 0 END, CONCAT('current=', COUNT(*))
 FROM dbo.t_sso_user_credentials WHERE UserId = @SchoolUserId AND IsCurrent = 1;
 
--- duplicate email
+/*
+  duplicate email
+
+  ⚠️ IT PASSES A MOBILE NOW, AND THAT IS WHAT KEEPS THE CASE HONEST. The school
+  signup gained a required-mobile rule (client decision, 11 Nov 2026) and it
+  sits ABOVE the duplicate checks, so a call with no mobile would answer
+  VALIDATION_FAILED and this assertion would go red while testing nothing about
+  duplicates. The number is a fresh one — a repeat of the row above would reach
+  DUPLICATE_MOBILE instead, which is the same trap one branch further on.
+*/
 DELETE FROM #RegSchool;
 INSERT INTO #RegSchool
-EXEC dbo.USP_RegisterSchoolUser @Email = N'test.school@example.com', @PasswordHash = @H,
-     @PasswordSalt = @S, @Iterations = 210000;
+EXEC dbo.USP_RegisterSchoolUser @Email = N'test.school@example.com', @Mobile = '9990000102',
+     @PasswordHash = @H, @PasswordSalt = @S, @Iterations = 210000;
 INSERT INTO @Assert (Area, Name, Passed, Detail)
 SELECT 'registration', 'duplicate email returns Status 0 / DUPLICATE_EMAIL',
        CASE WHEN Status = 0 AND Code = 'DUPLICATE_EMAIL' THEN 1 ELSE 0 END,
        CONCAT('Status=', Status, ' Code=', ISNULL(Code,'<null>')) FROM #RegSchool;
 
+/*
+  🔴 THE NEXT TWO CASES PASS A MOBILE **AND** ASSERT THE MESSAGE, AND BOTH
+  HALVES ARE THE FIX FOR THE SAME BUG.
+
+  They used to send no mobile and check only that the code was
+  VALIDATION_FAILED. Once the required-mobile rule went in they still passed —
+  and they passed WITHOUT EVER REACHING THE BRANCH THEY NAME, because a missing
+  mobile answers VALIDATION_FAILED too. "Malformed email rejected" would have
+  stayed green with the email check deleted.
+
+  ⚠️ So the code alone is not enough for any case in a chain that shares one
+  code. The message is what identifies the branch, and the mobile is what lets
+  the call reach it.
+*/
+
 -- malformed email
 DELETE FROM #RegSchool;
 INSERT INTO #RegSchool
-EXEC dbo.USP_RegisterSchoolUser @Email = N'not-an-email', @PasswordHash = @H,
-     @PasswordSalt = @S, @Iterations = 210000;
+EXEC dbo.USP_RegisterSchoolUser @Email = N'not-an-email', @Mobile = '9990000104',
+     @PasswordHash = @H, @PasswordSalt = @S, @Iterations = 210000;
 INSERT INTO @Assert (Area, Name, Passed, Detail)
-SELECT 'registration', 'malformed email rejected as VALIDATION_FAILED',
-       CASE WHEN Status = 0 AND Code = 'VALIDATION_FAILED' THEN 1 ELSE 0 END,
-       ISNULL(Code,'<null>') FROM #RegSchool;
+SELECT 'registration', 'malformed email rejected, and the message says EMAIL',
+       CASE WHEN Status = 0 AND Code = 'VALIDATION_FAILED'
+                 AND Message LIKE N'%email address is not valid%' THEN 1 ELSE 0 END,
+       CONCAT(ISNULL(Code,'<null>'), ' : ', ISNULL(Message,'<null>')) FROM #RegSchool;
 
 -- wrong hash length
 DELETE FROM #RegSchool;
 INSERT INTO #RegSchool
-EXEC dbo.USP_RegisterSchoolUser @Email = N'shorthash@example.com',
+EXEC dbo.USP_RegisterSchoolUser @Email = N'shorthash@example.com', @Mobile = '9990000105',
      @PasswordHash = 0x41, @PasswordSalt = @S, @Iterations = 210000;
 INSERT INTO @Assert (Area, Name, Passed, Detail)
-SELECT 'registration', 'wrong hash length rejected before any insert',
-       CASE WHEN Status = 0 AND Code = 'VALIDATION_FAILED' THEN 1 ELSE 0 END,
-       ISNULL(Code,'<null>') FROM #RegSchool;
+SELECT 'registration', 'wrong hash length rejected, and the message says HASH',
+       CASE WHEN Status = 0 AND Code = 'VALIDATION_FAILED'
+                 AND Message LIKE N'%password hash is malformed%' THEN 1 ELSE 0 END,
+       CONCAT(ISNULL(Code,'<null>'), ' : ', ISNULL(Message,'<null>')) FROM #RegSchool;
+
+/*
+  AND THE RULE ITSELF, which nothing in this file covered — it was only ever
+  visible as the reason three other cases broke.
+
+  ⚠️ A SCHOOL ONLY. USP_RegisterTeacherUser and USP_CreateAdminUser are
+  deliberately unchanged: the client's decision was about the school signup
+  screen, and the teacher case below is what keeps that deliberate.
+*/
+DELETE FROM #RegSchool;
+INSERT INTO #RegSchool
+EXEC dbo.USP_RegisterSchoolUser @Email = N'nomobile@example.com', @Mobile = NULL,
+     @PasswordHash = @H, @PasswordSalt = @S, @Iterations = 210000;
+INSERT INTO @Assert (Area, Name, Passed, Detail)
+SELECT 'registration', 'a school with NO MOBILE is refused, and the message says so',
+       CASE WHEN Status = 0 AND Code = 'VALIDATION_FAILED'
+                 AND Message LIKE N'%mobile number is required%' THEN 1 ELSE 0 END,
+       CONCAT(ISNULL(Code,'<null>'), ' : ', ISNULL(Message,'<null>')) FROM #RegSchool;
+
+INSERT INTO @Assert (Area, Name, Passed, Detail)
+SELECT 'registration', 'and it is refused BEFORE any row is written',
+       CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END, CONCAT('users=', COUNT(*))
+FROM dbo.t_sso_users WHERE Email = N'nomobile@example.com';
 
 -- teacher
 DELETE FROM #RegUser;
@@ -330,11 +379,27 @@ FROM dbo.t_sso_users WHERE UserId = @SchoolUserId;
 ------------------------------------------------------------------------------*/
 DECLARE @S2UserId bigint, @S2Uid uniqueidentifier, @S2RowVer int;
 
+/*
+  ⚠️ @Mobile IS REQUIRED HERE TOO, and leaving it out was not a small miss: the
+  registration failed, @S2UserId stayed NULL, the two assertions below went red
+  and the TWO AFTER THEM NEVER RAN AT ALL — 71 recorded against a manifest of
+  73, which is the drop run.mjs exists to catch.
+
+  🔴 AND ONE OF THEM WENT GREEN WHILE THE FIXTURE WAS BROKEN. "admin action
+  NULLs PreviousStatusId" counts rows that still carry a restore target and
+  wants zero — and a user that was never created has no lockout rows at all. It
+  is strengthened below to require the row to EXIST.
+*/
 DELETE FROM #RegSchool;
 INSERT INTO #RegSchool
 EXEC dbo.USP_RegisterSchoolUser @Email = N'reject.while.locked@example.com',
-     @PasswordHash = @H, @PasswordSalt = @S, @Iterations = 210000;
+     @Mobile = '9990000103', @PasswordHash = @H, @PasswordSalt = @S, @Iterations = 210000;
 SELECT @S2UserId = Id, @S2Uid = UserUid FROM #RegSchool;
+
+INSERT INTO @Assert (Area, Name, Passed, Detail)
+SELECT 'supersede', 'premise: the second school was created by this run',
+       CASE WHEN Status = 1 AND Id IS NOT NULL THEN 1 ELSE 0 END,
+       CONCAT('Status=', Status, ' Code=', ISNULL(Code,'<null>')) FROM #RegSchool;
 
 SET @i = 1;
 WHILE @i <= 5
@@ -364,12 +429,20 @@ INSERT INTO @Assert (Area, Name, Passed, Detail)
 SELECT 'supersede', 'admin can reject an account that is currently locked',
        CASE WHEN Status = 1 THEN 1 ELSE 0 END, ISNULL(Code,'<null>') FROM #StatusUpd;
 
+/*
+  🔴 "THE ROW EXISTS **AND** CARRIES NULL", not "no row carries a value".
+
+  The old form counted rows still holding a restore target and wanted zero,
+  which a user with no lockout rows at all satisfies perfectly — and that is
+  exactly what happened while the registration above was failing. One live
+  lockout, and its PreviousStatusId NULL, is the thing being claimed.
+*/
 INSERT INTO @Assert (Area, Name, Passed, Detail)
 SELECT 'supersede', 'admin action NULLs PreviousStatusId on the live lockout',
-       CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END,
-       CONCAT('rows still carrying a restore target=', COUNT(*))
+       CASE WHEN COUNT(*) = 1 AND COUNT(PreviousStatusId) = 0 THEN 1 ELSE 0 END,
+       CONCAT('live lockouts=', COUNT(*), ' still carrying a restore target=', COUNT(PreviousStatusId))
 FROM dbo.t_sso_user_lockouts
-WHERE UserId = @S2UserId AND UnlockedOn IS NULL AND PreviousStatusId IS NOT NULL;
+WHERE UserId = @S2UserId AND UnlockedOn IS NULL;
 
 -- Age the lock out, then sign in successfully.
 UPDATE dbo.t_sso_user_lockouts

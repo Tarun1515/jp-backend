@@ -138,5 +138,85 @@ BEGIN
 END
 GO
 
+/*==============================================================================
+  🔒 SR-2 — THE PIN REVIEW LOG HAS EXACTLY TWO WRITERS
+==============================================================================*/
+
+/*
+  🔴 t_app_branch_pin_review_log IS APPEND-ONLY (038), and 034's header has the
+  honest version of what that means: the table has no Is_Deleted, no ModifiedOn
+  and no ModifiedBy, so there is no COLUMN through which an edit can be
+  expressed — but nothing in SQL Server stops a procedure issuing an UPDATE or a
+  DELETE against the rows that are there.
+
+  ⚠️ 034's own header promises this guard for t_app_job_moderation_log ("024's
+  companion procedures file carries a build guard instead: no procedure may
+  UPDATE or DELETE this table") AND IT WAS NEVER WRITTEN — measured in SR-2,
+  nothing anywhere asserts it. That gap is left alone here because the job log
+  is not this pass's subject and a guard added to somebody else's table in a
+  pass about campus pins is how a build breaks for reasons nobody can follow.
+  🔴 REPORTED SO IT IS NOT FOUND AGAIN BY SOMEBODY TRUSTING THE COMMENT.
+
+  ---------------------------------------------------------------------------
+  WHY THIS IS A DEPENDENCY CHECK AND NOT A TEXT SEARCH
+  ---------------------------------------------------------------------------
+  The obvious guard greps sys.sql_modules for 'UPDATE ... t_app_branch_pin_
+  review_log'. 025's header records why that is a trap: a text search cannot
+  tell code from a comment ABOUT code, and 6.5A's version of exactly this check
+  matched its own prose and failed the build over a comment.
+
+  So this asks the SERVER who writes the table. sys.dm_sql_referenced_entities
+  carries is_updated — 1 for an entity a module writes, 0 for one it only reads
+  — and anything writing this log that is not one of the two acting procedures
+  fails the build.
+
+  ⚠️ AND ITS LIMIT, STATED PLAINLY: is_updated does not distinguish an INSERT
+  from an UPDATE, so this cannot stop USP_CorrectCampusPin itself growing an
+  UPDATE against the log. What it stops is the realistic failure — a NEW
+  procedure, written later by somebody who did not read 038, that tidies,
+  corrects or soft-deletes trail rows. That is a weaker claim than "the log is
+  immutable" and a true one, which is the trade this project keeps making.
+
+  ⚠️ AND THE OTHER LIMIT, 034's: somebody with direct database access can still
+  UPDATE a row. One login, no DENY. What is prevented is the APPLICATION growing
+  a way to do it.
+
+  Proven to fire: a probe procedure containing
+  "DELETE FROM dbo.t_app_branch_pin_review_log WHERE 1 = 0" fails this and is
+  named; one that only SELECTs from it does not.
+*/
+DECLARE @logWriters nvarchar(1000) = N'';
+
+SELECT @logWriters = STRING_AGG(CAST(x.name AS nvarchar(128)), N', ')
+  FROM (
+        SELECT o.name,
+               MAX(CAST(r.is_updated AS int)) AS Writes
+          FROM sys.objects o
+         CROSS APPLY sys.dm_sql_referenced_entities('dbo.' + o.name, 'OBJECT') r
+         WHERE o.type IN ('P', 'FN', 'IF', 'TF', 'V')
+           AND o.is_ms_shipped = 0
+           AND r.referenced_entity_name = 't_app_branch_pin_review_log'
+         GROUP BY o.name
+       ) x
+ WHERE x.Writes = 1
+   AND x.name NOT IN (
+           /* The admin moves the pin. Writes the CORRECT row. (028) */
+           'USP_CorrectCampusPin',
+
+           /* The admin judges the distance correct. Writes the CLEAR row and
+              NOTHING else — 028's own guard asserts it touches no branch. */
+           'USP_ClearCampusPin');
+
+IF ISNULL(@logWriters, N'') <> N''
+BEGIN
+    DECLARE @srTwo nvarchar(1400) =
+        N'999_cross_file_guards: 🔒 SR-2 — A PROCEDURE WRITES t_app_branch_pin_review_log THAT IS NOT ONE OF ITS TWO WRITERS: '
+        + @logWriters
+        + N'. The table is APPEND-ONLY (038): it records that an administrator overwrote a figure a school supplied, with a reason and an actor, and a trail that can be rewritten is not evidence of anything. If this procedure genuinely must write it, add it to the list here WITH the reason — and if it UPDATEs or DELETEs rows, it must not exist at all.';
+
+    RAISERROR('%s', 16, 1, @srTwo);
+END
+GO
+
 PRINT '    Cross-file guards passed.';
 GO

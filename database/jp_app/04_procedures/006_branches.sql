@@ -141,6 +141,29 @@ CREATE OR ALTER PROCEDURE dbo.USP_SaveBranch
     @Pincode        varchar(10)    = NULL,
     @Latitude       decimal(9, 6)  = NULL,
     @Longitude      decimal(9, 6)  = NULL,
+
+    /*
+      ----------------------------------------------------------------------------
+      🔴 THE ANCHOR: WHERE THE STATED ADDRESS GEOCODED TO, NOT WHERE THE PIN IS
+      ----------------------------------------------------------------------------
+      038 added these columns and NOTHING WROTE THEM, which meant the campus-pin
+      review queue could never hold a row: `needsReview` is measured against the
+      anchor, and a campus with no anchor is reported as present and visibly
+      unmeasured. The feature existed and could not fire.
+
+      ⚠️ THEY ARE A DIFFERENT FACT FROM @Latitude/@Longitude AND MUST NEVER BE
+      FILLED FROM THEM. The pin is where the school says the gate is; the anchor
+      is where the provider put the address they typed. Copying one into the
+      other makes every campus exactly 0 km from itself, which is a queue that is
+      empty for the wrong reason — the worst outcome available here, because an
+      empty queue reads as "nothing to review".
+
+      So they are written ONLY when the caller sends them, which only the address
+      lookup does. A plain campus edit leaves the stored anchor alone rather than
+      clearing it: the school moving its pin does not un-geocode its address.
+    */
+    @GeocodedLatitude   decimal(9, 6) = NULL,
+    @GeocodedLongitude  decimal(9, 6) = NULL,
     @ContactPerson  nvarchar(150)  = NULL,
     @ContactEmail   nvarchar(150)  = NULL,
     @ContactMobile  varchar(15)    = NULL,
@@ -196,12 +219,15 @@ BEGIN
                 INSERT INTO dbo.t_app_school_branches
                     (SchoolId, BranchName, BranchCode, IsHeadOffice,
                      AddressLine1, AddressLine2, CityId, DistrictId, StateId, Pincode,
-                     Latitude, Longitude, ContactPerson, ContactEmail, ContactMobile,
+                     Latitude, Longitude, GeocodedLatitude, GeocodedLongitude, GeocodedOn,
+                     ContactPerson, ContactEmail, ContactMobile,
                      Is_Active, CreatedBy)
                 VALUES
                     (@SchoolId, @BranchName, @BranchCode, 0,     -- never the head office
                      @AddressLine1, @AddressLine2, @CityId, @DistrictId, @StateId, @Pincode,
-                     @Latitude, @Longitude, @ContactPerson, @ContactEmail, @ContactMobile,
+                     @Latitude, @Longitude, @GeocodedLatitude, @GeocodedLongitude,
+                     CASE WHEN @GeocodedLatitude IS NOT NULL AND @GeocodedLongitude IS NOT NULL THEN @Now END,
+                     @ContactPerson, @ContactEmail, @ContactMobile,
                      ISNULL(@IsActive, 1), @ActionByUserId);
 
                 SET @Id = SCOPE_IDENTITY();
@@ -235,6 +261,21 @@ BEGIN
                        Pincode       = @Pincode,
                        Latitude      = @Latitude,
                        Longitude     = @Longitude,
+
+                       /*
+                         ⚠️ COALESCE, NOT ASSIGNMENT. A campus edit that carries no
+                         anchor must LEAVE the stored one alone — the school moving
+                         its pin, or renaming the campus, has not un-geocoded its
+                         address. Only a call that actually resolved an address
+                         sends these, and only then is GeocodedOn re-stamped.
+                       */
+                       GeocodedLatitude  = COALESCE(@GeocodedLatitude,  GeocodedLatitude),
+                       GeocodedLongitude = COALESCE(@GeocodedLongitude, GeocodedLongitude),
+                       GeocodedOn        = CASE
+                                               WHEN @GeocodedLatitude IS NOT NULL
+                                                AND @GeocodedLongitude IS NOT NULL THEN @Now
+                                               ELSE GeocodedOn
+                                           END,
                        ContactPerson = @ContactPerson,
                        ContactEmail  = @ContactEmail,
                        ContactMobile = @ContactMobile,

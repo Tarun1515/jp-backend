@@ -331,6 +331,194 @@ public sealed class AdminDeskController : ControllerBase
 
         return Ok(ApiResponse.Success<object?>(null, message));
     }
+
+    // ---- campus pins (SR-2) ------------------------------------------------
+
+    /*==========================================================================
+      THE CAMPUS-PIN DESK. 🔒 MODERATION.CAMPUS_PIN on every route, in the
+      service.
+
+      🔴 MOVED HERE FROM ReportsController ON 14 Nov 2026, AND THE SCREEN HAD
+      NEVER WORKED.
+
+      These actions were written at the foot of this file but INSIDE
+      ReportsController, which carries [Route("api")] — so they served
+      /api/campus-pins while jp-admin's campus-pin.service.ts called
+      /api/admin/desk/campus-pins, which is also what that service's own
+      documentation comment says and what this block's heading implies. Every
+      call 404ed, and the screen's error copy — "the review list could not be
+      loaded … try again in a moment" — reads as a passing blip rather than a
+      route that does not exist.
+
+      ⚠️ NOTHING CAUGHT IT, AND TWO THINGS CAME CLOSE. swagger.mjs asserts the
+      endpoints are DOCUMENTED, which they were, at the wrong prefix. And
+      campus-pin.mjs found the 404 first — then I "fixed the suite" by pointing
+      it at the server's actual path, which is the moment the real bug was
+      available and was walked past. The suite now asserts the prefix the
+      CLIENT uses, so the two can never drift apart silently again.
+
+      ⚠️ ReportsController's own header says it exists "BECAUSE THESE ARE NOT
+      ADMIN ROUTES". That was true of its two actions and never true of these
+      six, which sit behind an admin permission and are read by an admin
+      screen. Appending to the end of a file is not the same as appending to
+      the right class.
+
+      ⚠️ NOT VERIFICATION.SCHOOL, which was the first choice: a verification is
+      settled ONCE before a school's first job goes live, and a campus pin is
+      corrected years later about a campus that did not exist then.
+      AppConstants.PermissionCodes.ModerationCampusPin carries the argument and
+      jp_sso/03_seed/009 asserts the closed set of holders.
+
+      🔴 pinRef IS AN OPAQUE STRING, so the route parameter is {pinRef} and NOT
+      {branchUid:guid}. A :guid constraint would publish the format in the URL
+      template, which is exactly what the contract promises not to do — and
+      would turn a reference the desk may later discriminate ("B:..." / "R:...")
+      into a 404 from the router instead of a decision the service makes. The
+      service is the one place that knows the format.
+
+      🔴 THE THRESHOLD IS NOT A QUERY PARAMETER, and it must not become one. It
+      is configuration (CampusPinReview:MaxDistanceKm); a client-supplied
+      threshold would let anybody with the permission produce whatever queue
+      they wanted and would be a second answer to a question the configuration
+      answers.
+    ==========================================================================*/
+
+    /// <summary>
+    /// Campus pins, the ones needing review first. 🔒 MODERATION.CAMPUS_PIN.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 EVERY ROW CARRIES <c>thresholdKm</c>. The client keeps no copy of the
+    /// server's setting — one would be silently wrong the day it is configured
+    /// to anything else, and the screen would then explain the queue using the
+    /// wrong number.
+    ///
+    /// ⚠️ <c>needsReview</c> IS NOT <c>distanceKm &gt; thresholdKm</c>. A
+    /// CLEARED pin is a large distance an administrator has judged correct, and
+    /// <c>isCleared</c> sits beside it so the screen can say so.
+    ///
+    /// ⚠️ <c>trail</c> IS EMPTY HERE. Twenty trails for a page nobody opened is
+    /// twenty queries nobody asked for; the single-row reads below populate it.
+    /// </remarks>
+    [HttpGet("campus-pins")]
+    [ProducesResponseType(typeof(Response<IReadOnlyList<CampusPinReviewDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> SearchCampusPins(
+        [FromQuery] bool needsReviewOnly = false,
+        [FromQuery] bool includeCleared = true,
+        [FromQuery] string? search = null,
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var (rows, total) = await _desk
+            .SearchCampusPinsAsync(
+                User, needsReviewOnly, includeCleared, search, pageNumber, pageSize, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(ApiResponse.Paged(rows, total));
+    }
+
+    /// <summary>One campus's pin and its trail. 🔒 MODERATION.CAMPUS_PIN.</summary>
+    /// <remarks>
+    /// ⚠️ A reference that resolves to nothing — including one that is not even
+    /// the right shape — is a 404 and never a 400. The format is the server's
+    /// business, so an error naming it would publish the format and tell a
+    /// prober when they had guessed right (2.6).
+    /// </remarks>
+    [HttpGet("campus-pins/{pinRef}")]
+    [ProducesResponseType(typeof(Response<CampusPinReviewDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetCampusPin(string pinRef, CancellationToken cancellationToken)
+    {
+        var row = await _desk.GetCampusPinAsync(User, pinRef, cancellationToken).ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(row));
+    }
+
+    /// <summary>
+    /// The campus a registration created, and its trail.
+    /// 🔒 MODERATION.CAMPUS_PIN.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 TWO DATABASES, PAIRED IN THE SERVICE. jp_mdm says what request this
+    /// is; jp_app says what campus it produced, matched on
+    /// t_app_schools.SourceRequestUid. Nothing joins them (2.2).
+    ///
+    /// ⚠️ IT RESOLVES TO THE HEAD OFFICE — the campus a registration creates,
+    /// which 003 calls "the branch a school's own address belongs to". A school
+    /// that has since added campuses has them on the list, not here.
+    ///
+    /// ⚠️ A request with no campus, and a request that does not exist, both
+    /// answer with a null payload rather than different errors. The client has
+    /// nothing to show either way, and distinguishing them would tell a prober
+    /// which request ids are real.
+    /// </remarks>
+    [HttpGet("campus-pins/by-request/{requestId:long}")]
+    [ProducesResponseType(typeof(Response<CampusPinReviewDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetCampusPinByRequest(
+        long requestId, CancellationToken cancellationToken)
+    {
+        var row = await _desk.GetCampusPinByRequestAsync(User, requestId, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(row));
+    }
+
+    /// <summary>Move a campus pin, with a reason. 🔒 MODERATION.CAMPUS_PIN.</summary>
+    /// <remarks>
+    /// 🔴 A SEPARATE ACT FROM CLEARING, not the same endpoint called with the
+    /// old coordinates. Posting the unchanged pin back through here is REFUSED
+    /// by name: it would write a correction that corrected nothing, and the
+    /// trail would then read "corrected by X" about somebody who deliberately
+    /// did not move it.
+    ///
+    /// 🔴 THE PREVIOUS PIN IS RECORDED. The school chose it, and an append-only
+    /// log row is what makes this reversible and what the school is shown.
+    /// </remarks>
+    [HttpPost("campus-pins/{pinRef}/correct")]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CorrectCampusPin(
+        string pinRef, [FromBody] CorrectCampusPinRequest request, CancellationToken cancellationToken)
+    {
+        var message = await _desk.CorrectCampusPinAsync(User, pinRef, request, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success<object?>(null, message));
+    }
+
+    /// <summary>
+    /// Record that a campus pin's distance from its stated address is correct.
+    /// 🔒 MODERATION.CAMPUS_PIN.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THIS MOVES NOTHING. Not the coordinates, not RowVersion, not
+    /// ModifiedOn — 028's build guard asserts the procedure writes nothing at
+    /// all on the campus. It writes one trail row saying somebody judged the
+    /// distance acceptable, and the campus stops needing review because that
+    /// verdict is derived from the trail.
+    ///
+    /// ⚠️ THE JUDGEMENT LAPSES IF THE SCHOOL MOVES THE PIN. It is recorded
+    /// against the exact pin that was judged, so there is no stale flag and no
+    /// sweep to forget.
+    /// </remarks>
+    [HttpPost("campus-pins/{pinRef}/clear")]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ClearCampusPin(
+        string pinRef, [FromBody] ClearCampusPinRequest request, CancellationToken cancellationToken)
+    {
+        var message = await _desk.ClearCampusPinAsync(User, pinRef, request, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success<object?>(null, message));
+    }
 }
 
 /*==============================================================================

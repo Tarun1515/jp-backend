@@ -122,6 +122,31 @@ VALUES
 ('ADMIN_MODERATE_REPORTS',  'ADMIN_MODERATION', N'Reports',    1, N'/moderation/reports',    'flag',          'MODERATION.REPORT',   20, 1, 1),
 
 /*
+  SCHOOL REVAMP (SR-2) — the campus-pin desk.
+
+  🔴 A ROUTE WITH NO MENU ROW IS INVISIBLE. This file's own header says a row
+  pointing at a missing route is a 404 in every sidebar, and the converse is
+  what nearly happened here: the admin app's route landed in its own commit and
+  the screen was reachable only by typing the URL. The two halves belong
+  together, and this is the second half.
+
+  ⚠️ UNDER MODERATION, NOT UNDER VERIFICATION, and 009_seed_campus_pin_
+  permission.sql has the long argument. The short one: verification is settled
+  ONCE before a school's first job; a campus pin is corrected years later about
+  a campus that did not exist then. The desk sits beside the verification queue
+  in an admin's day and belongs to moderation in what it can do.
+
+  ⚠️ "Campus pins", not "Branch pins" — the same word the screen, the route and
+  the CampusPinReview contract use, and the same choice SCHOOL_BRANCHES records
+  ("Campuses", route /branches). The table is still t_app_school_branches.
+
+  🔴 MODERATION.CAMPUS_PIN IS SEEDED IN 009, WHICH RUN_ALL PUTS BEFORE THIS
+  FILE. The guard below resolves every PermissionCode here and aborts on an
+  unknown one — listed the other way round, this row fails the whole build.
+*/
+('ADMIN_MODERATE_CAMPUS_PINS', 'ADMIN_MODERATION', N'Campus pins', 1, N'/moderation/campus-pins', 'map-pin', 'MODERATION.CAMPUS_PIN', 30, 1, 1),
+
+/*
   Phase 7B — the contact queue.
 
   ⚠️ TOP LEVEL, NOT UNDER MODERATION, because it is not moderation: answering

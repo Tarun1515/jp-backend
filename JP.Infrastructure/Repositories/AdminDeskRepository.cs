@@ -149,6 +149,53 @@ internal interface IAdminDeskRepository
 
     Task<ProcResult> ResolveEnquiryAsync(
         long enquiryId, string remarks, long actorUserId, CancellationToken cancellationToken);
+
+    // ---- campus pins (SR-2) ------------------------------------------------
+
+    /// <summary>
+    /// The campus-pin desk. ONE method for the list and both single-row reads,
+    /// because <c>USP_SearchCampusPinReview</c> is one procedure.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE THRESHOLD IS PASSED IN, NEVER DEFAULTED. The procedure has no
+    /// default for it and refuses to run without one — see
+    /// <c>CampusPinReviewOptions</c>. This repository does not know what the
+    /// number is and must not: it comes from configuration through the service.
+    /// </remarks>
+    Task<CampusPinReviewResult> SearchCampusPinsAsync(
+        decimal thresholdKm, Guid? branchUid, Guid? sourceRequestUid,
+        bool needsReviewOnly, bool includeCleared, string? search,
+        int pageNumber, int pageSize, bool includeTrail,
+        CancellationToken cancellationToken);
+
+    Task<ProcResult> CorrectCampusPinAsync(
+        Guid branchUid, decimal latitude, decimal longitude, string remarks,
+        long actorUserId, CancellationToken cancellationToken);
+
+    Task<ProcResult> ClearCampusPinAsync(
+        Guid branchUid, string remarks, long actorUserId, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// The three result sets <c>USP_SearchCampusPinReview</c> returns.
+/// </summary>
+/// <remarks>
+/// ⚠️ A class rather than a three-part tuple, for 034's reason: a tuple of a
+/// list, an int and another list is read positionally at every call site, and
+/// swapping the two lists compiles.
+///
+/// 🔴 THE PROCEDURE ALWAYS SENDS ALL THREE, empty when not asked for, so this
+/// reader never has to know which call it was. A procedure returning two sets
+/// sometimes and three others is one a GridReader cannot read safely — the call
+/// site that guesses wrong gets a silent empty list rather than an error.
+/// </remarks>
+internal sealed class CampusPinReviewResult
+{
+    public IReadOnlyList<CampusPinReviewDto> Rows { get; set; } = [];
+
+    public int Total { get; set; }
+
+    public IReadOnlyList<CampusPinActionDto> Trail { get; set; } = [];
 }
 
 /// <summary>What USP_SubmitReport answers with.</summary>
@@ -455,6 +502,105 @@ internal sealed class AdminDeskRepository : BaseRepository, IAdminDeskRepository
         p.Add("@ActorUserId", actorUserId, DbType.Int64);
 
         return QuerySingleAsync<ProcResult>("USP_ResolveEnquiry", p, cancellationToken);
+    }
+
+    // ---- campus pins (SR-2) ------------------------------------------------
+
+    public Task<CampusPinReviewResult> SearchCampusPinsAsync(
+        decimal thresholdKm, Guid? branchUid, Guid? sourceRequestUid,
+        bool needsReviewOnly, bool includeCleared, string? search,
+        int pageNumber, int pageSize, bool includeTrail,
+        CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+
+        /*
+          🔴 decimal(9,3) TO MATCH THE PARAMETER, declared explicitly. Dapper
+          infers a scale for a decimal that does not always survive the round
+          trip, and a threshold of 3.5 arriving as 3 or 4 would silently change
+          which campuses are on the queue.
+        */
+        p.Add("@ThresholdKm", thresholdKm, DbType.Decimal, precision: 9, scale: 3);
+
+        p.Add("@BranchUid", branchUid, DbType.Guid);
+        p.Add("@SourceRequestUid", sourceRequestUid, DbType.Guid);
+        p.Add("@NeedsReviewOnly", needsReviewOnly, DbType.Boolean);
+        p.Add("@IncludeCleared", includeCleared, DbType.Boolean);
+        p.Add("@Search", search, DbType.String, size: 200);
+        p.Add("@PageNumber", pageNumber, DbType.Int32);
+        p.Add("@PageSize", pageSize, DbType.Int32);
+        p.Add("@IncludeTrail", includeTrail, DbType.Boolean);
+
+        return QueryMultipleAsync<CampusPinReviewResult>(
+            "USP_SearchCampusPinReview",
+            async grid =>
+            {
+                var rows = (await grid.ReadAsync<CampusPinReviewDto>().ConfigureAwait(false)).AsList();
+                var total = await grid.ReadFirstOrDefaultAsync<int>().ConfigureAwait(false);
+                var trail = (await grid.ReadAsync<CampusPinActionDto>().ConfigureAwait(false)).AsList();
+
+                /*
+                  ⚠️ THE TRAIL IS ATTACHED TO THE ROW HERE, not left beside it.
+                  A single read returns one row and its trail; the caller should
+                  not have to pair them up, because the day it forgets, the
+                  screen shows an empty history for a campus that has one.
+                */
+                if (trail.Count > 0 && rows.Count == 1)
+                {
+                    rows[0].Trail = trail;
+                }
+
+                return new CampusPinReviewResult
+                {
+                    Rows = rows,
+                    Total = total,
+                    Trail = trail,
+                };
+            },
+            p,
+            cancellationToken);
+    }
+
+    public Task<ProcResult> CorrectCampusPinAsync(
+        Guid branchUid, decimal latitude, decimal longitude, string remarks,
+        long actorUserId, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@BranchUid", branchUid, DbType.Guid);
+
+        /*
+          ⚠️ decimal(9,6), EXPLICITLY, both of them. 036's guard exists because
+          the same place stored at two precisions comes back as two different
+          points; the same is true of the same place SENT at two precisions. A
+          latitude that arrives as 29.15 instead of 29.150000 is harmless, but
+          one that arrives scaled to 2 decimal places has moved the pin by up to
+          a kilometre — which is the order of the threshold itself.
+        */
+        p.Add("@Latitude", latitude, DbType.Decimal, precision: 9, scale: 6);
+        p.Add("@Longitude", longitude, DbType.Decimal, precision: 9, scale: 6);
+
+        p.Add("@Remarks", remarks, DbType.String, size: 1000);
+        p.Add("@ActorUserId", actorUserId, DbType.Int64);
+
+        return QuerySingleAsync<ProcResult>("USP_CorrectCampusPin", p, cancellationToken);
+    }
+
+    public Task<ProcResult> ClearCampusPinAsync(
+        Guid branchUid, string remarks, long actorUserId, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@BranchUid", branchUid, DbType.Guid);
+        p.Add("@Remarks", remarks, DbType.String, size: 1000);
+        p.Add("@ActorUserId", actorUserId, DbType.Int64);
+
+        /*
+          🔴 NO COORDINATES, AND THERE IS NO PARAMETER FOR ANY. A clear records
+          a judgement and changes nothing — not the pin, not RowVersion, not
+          ModifiedOn. 028's build guard asserts the procedure writes nothing on
+          the branch at all, and the absence of a parameter here is the same
+          rule expressed where a caller would otherwise reach for one.
+        */
+        return QuerySingleAsync<ProcResult>("USP_ClearCampusPin", p, cancellationToken);
     }
 
     private static FeaturedWindowDto Map(FeaturedWindowRow row) => new()

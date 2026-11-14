@@ -65,6 +65,43 @@ DECLARE @SchoolEntity  uniqueidentifier = NEWID(),
 
 DECLARE @RequestId bigint, @RowVersion int, @StatusId int, @RequestNo varchar(30);
 
+/*------------------------------------------------------------------------------
+  SR-6 — THE SIX COMPULSORY REGISTRATION FIELDS, AS FIXTURE VALUES.
+
+  School type · Board · Affiliation number · Registration number · PAN ·
+  Established year became required to submit (client decision, 11 Nov 2026), so
+  every school submission in this file has to carry them. This suite is about
+  the APPROVAL ENGINE — levels, races, duplicates, sequencing — and none of its
+  assertions are about those six; they are the fare, not the journey.
+
+  🔴 WHICH IS WHY THEY ARE SIX VARIABLES AND NOT SEVEN COPIES OF SIX LITERALS.
+  Seven copies would be seven places to update the next time the rule moves,
+  and the one that got missed would fail somewhere in the middle of a race test
+  with a message about a PAN.
+
+  ⚠️ IDs ARE READ FROM THE MASTERS, NOT GUESSED. Hardcoding 1 and 1 works today
+  and stops working the first time a seed reorders; and a submission refused for
+  an unknown board would report VALIDATION_FAILED from a chain this suite does
+  not test, which is the most confusing kind of red.
+
+  ⚠️ AND THE SIX RULES THEMSELVES ARE COVERED ELSEWHERE — compulsory-fields.mjs
+  drives each of them by name, on both submit paths. Asserting them again here
+  would spread one rule across two files with no reader able to say which is
+  authoritative.
+------------------------------------------------------------------------------*/
+DECLARE @TType  int         = (SELECT TOP (1) SchoolTypeId FROM dbo.m_mdm_school_type ORDER BY SchoolTypeId),
+        @TBoard int         = (SELECT TOP (1) BoardId      FROM dbo.m_mdm_board       ORDER BY BoardId),
+        @TAffil varchar(50) = 'CBSE/2011/34120',
+        @TRegNo varchar(50) = 'SOC-99-2011',
+        @TPan   varchar(10) = 'ABCDE1234F',
+        @TYear  smallint    = 2011;
+
+INSERT INTO @Assert (Area, Name, Passed, Detail)
+SELECT 'fixtures', 'premise: the school-type and board masters are seeded',
+       CASE WHEN @TType IS NOT NULL AND @TBoard IS NOT NULL THEN 1 ELSE 0 END,
+       CONCAT('schoolTypeId=', ISNULL(CAST(@TType AS varchar(10)), '<null>'),
+              ' boardId=', ISNULL(CAST(@TBoard AS varchar(10)), '<null>'));
+
 /*
   Subject fixtures.
 
@@ -85,7 +122,9 @@ VALUES (901, 'TEST_MATH', N'Test Maths',   901),
 ==============================================================================*/
 EXEC dbo.USP_SubmitApprovalRequest
      @RequestTypeId = 1, @EntityUid = @SchoolEntity, @RequestorUserId = @Requestor,
-     @OrganizationUid = @OrgUid, @SchoolName = N'Greenwood Public School',
+     @SchoolTypeId = @TType, @BoardId = @TBoard, @AffiliationNumber = @TAffil,
+     @RegistrationNo = @TRegNo, @PanNumber = @TPan, @EstablishedYear = @TYear,
+     @SchoolName = N'Greenwood Public School',
      @ContactEmail = N'principal@greenwood.edu.in';
 
 SELECT TOP (1) @RequestId = RequestId, @RowVersion = RowVersion,
@@ -173,6 +212,8 @@ DECLARE @RejectEntity uniqueidentifier = NEWID(), @RejectId bigint, @RejectRV in
 
 EXEC dbo.USP_SubmitApprovalRequest
      @RequestTypeId = 1, @EntityUid = @RejectEntity, @RequestorUserId = @Requestor,
+     @SchoolTypeId = @TType, @BoardId = @TBoard, @AffiliationNumber = @TAffil,
+     @RegistrationNo = @TRegNo, @PanNumber = @TPan, @EstablishedYear = @TYear,
      @SchoolName = N'Nonexistent Academy';
 
 SELECT @RejectId = RequestId, @RejectRV = RowVersion
@@ -255,6 +296,8 @@ DECLARE @RaceEntity uniqueidentifier = NEWID(), @RaceId bigint, @RaceRV int;
 
 EXEC dbo.USP_SubmitApprovalRequest
      @RequestTypeId = 1, @EntityUid = @RaceEntity, @RequestorUserId = @Requestor,
+     @SchoolTypeId = @TType, @BoardId = @TBoard, @AffiliationNumber = @TAffil,
+     @RegistrationNo = @TRegNo, @PanNumber = @TPan, @EstablishedYear = @TYear,
      @SchoolName = N'Contested School';
 
 SELECT @RaceId = RequestId, @RaceRV = RowVersion
@@ -311,6 +354,8 @@ VALUES (1, 2, 2, 1, NULL);
 
 EXEC dbo.USP_SubmitApprovalRequest
      @RequestTypeId = 1, @EntityUid = @TwoLevelEntity, @RequestorUserId = @Requestor,
+     @SchoolTypeId = @TType, @BoardId = @TBoard, @AffiliationNumber = @TAffil,
+     @RegistrationNo = @TRegNo, @PanNumber = @TPan, @EstablishedYear = @TYear,
      @SchoolName = N'Two Level School';
 
 SELECT @TwoLevelId = RequestId, @TwoLevelRV = RowVersion
@@ -376,6 +421,8 @@ DECLARE @DupEntity uniqueidentifier = NEWID(), @DupFirst bigint, @DupNo varchar(
 
 EXEC dbo.USP_SubmitApprovalRequest
      @RequestTypeId = 1, @EntityUid = @DupEntity, @RequestorUserId = @Requestor,
+     @SchoolTypeId = @TType, @BoardId = @TBoard, @AffiliationNumber = @TAffil,
+     @RegistrationNo = @TRegNo, @PanNumber = @TPan, @EstablishedYear = @TYear,
      @SchoolName = N'Double Click Academy';
 
 SELECT @DupFirst = RequestId, @DupNo = RequestNo
@@ -384,6 +431,8 @@ FROM dbo.t_mdm_approval_requests WHERE EntityUid = @DupEntity AND Is_Deleted = 0
 -- The same submission again, as a double click or a retry would send it.
 EXEC dbo.USP_SubmitApprovalRequest
      @RequestTypeId = 1, @EntityUid = @DupEntity, @RequestorUserId = @Requestor,
+     @SchoolTypeId = @TType, @BoardId = @TBoard, @AffiliationNumber = @TAffil,
+     @RegistrationNo = @TRegNo, @PanNumber = @TPan, @EstablishedYear = @TYear,
      @SchoolName = N'Double Click Academy';
 
 INSERT INTO @Assert (Area, Name, Passed, Detail)
@@ -414,6 +463,8 @@ BEGIN
 
     EXEC dbo.USP_SubmitApprovalRequest
          @RequestTypeId = 1, @EntityUid = @LoopEntity, @RequestorUserId = @Requestor,
+         @SchoolTypeId = @TType, @BoardId = @TBoard, @AffiliationNumber = @TAffil,
+         @RegistrationNo = @TRegNo, @PanNumber = @TPan, @EstablishedYear = @TYear,
          @SchoolName = N'Sequenced School';
 
     INSERT INTO @Made (RequestNo)

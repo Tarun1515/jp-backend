@@ -99,6 +99,11 @@ internal sealed class BranchRepository : BaseRepository, IBranchRepository
         p.Add("@Pincode", request.Pincode, DbType.AnsiString, size: 10);
         p.Add("@Latitude", request.Latitude, DbType.Decimal);
         p.Add("@Longitude", request.Longitude, DbType.Decimal);
+
+        // The anchor. Null on an ordinary edit; the procedure then keeps what
+        // is stored rather than clearing it. See SaveBranchRequest.
+        p.Add("@GeocodedLatitude", request.GeocodedLatitude, DbType.Decimal);
+        p.Add("@GeocodedLongitude", request.GeocodedLongitude, DbType.Decimal);
         p.Add("@ContactPerson", request.ContactPerson, DbType.String, size: 150);
         p.Add("@ContactEmail", request.ContactEmail, DbType.String, size: 150);
         p.Add("@ContactMobile", request.ContactMobile, DbType.AnsiString, size: 15);

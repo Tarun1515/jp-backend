@@ -87,6 +87,27 @@ BEGIN
         SELECT @Code = 'VALIDATION_FAILED', @Message = N'Email address is required.';
     ELSE IF @Email NOT LIKE '_%@_%._%'
         SELECT @Code = 'VALIDATION_FAILED', @Message = N'That email address is not valid.';
+
+    /*
+      🔴 THE MOBILE IS REQUIRED FOR A SCHOOL, AND IT WAS NOT. Client decision,
+      11 Nov 2026. The signup form said "Optional" in so many words and sent
+      "mobile || null"; the only rule here was the duplicate check below, which
+      never fires on a value nobody sent.
+
+      ⚠️ IT SITS WITH THE OTHER INPUT RULES, ABOVE THE DUPLICATE CHECKS, and
+      the order is the point: a caller sending neither a mobile nor a unique
+      email must be told about the mobile it did not send, not handed
+      DUPLICATE_EMAIL for the one it did.
+
+      ⚠️ THE TEACHER AND ADMIN PROCEDURES BELOW ARE DELIBERATELY UNCHANGED.
+      The decision was about the school signup screen; a teacher registering is
+      a different funnel with a different cost to friction, and widening a
+      client instruction on our own is how a product grows rules nobody asked
+      for.
+    */
+    ELSE IF @Mobile IS NULL
+        SELECT @Code = 'VALIDATION_FAILED', @Message = N'A mobile number is required.';
+
     ELSE IF @PasswordHash IS NULL OR DATALENGTH(@PasswordHash) <> 64
         SELECT @Code = 'VALIDATION_FAILED', @Message = N'The password hash is malformed.';
     ELSE IF @PasswordSalt IS NULL OR DATALENGTH(@PasswordSalt) <> 32

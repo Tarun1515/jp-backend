@@ -83,6 +83,28 @@ public static class DependencyInjection
                 + "default nobody chose.")
             .ValidateOnStart();
 
+        /*
+          SR-2. The campus-pin review threshold.
+
+          🔴 ValidateOnStart, like every section above, and here it earns its
+          keep twice over: the number reaches a stored procedure that has no
+          default for it, so a section typo'd to "MaxDistanceKM" would bind to 0
+          and the procedure would floor it at one metre — putting every pinned
+          campus on the review queue, with nothing anywhere saying why. Failing
+          the process names the setting instead.
+
+          ⚠️ Bound even when the section is absent: the options class carries
+          the 3km default, so a deployment that has not configured this gets a
+          working desk rather than a startup failure. That is the opposite
+          choice from AddressLookup, which ships OFF — because a review queue
+          with a guessed threshold is useful and a third-party call with a
+          guessed key is not.
+        */
+        services.AddOptions<CampusPinReviewOptions>()
+            .Bind(configuration.GetSection(CampusPinReviewOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
         // Stateless and thread-safe, so one instance each.
         services.AddSingleton<IDbConnectionFactory, DbConnectionFactory>();
         services.AddSingleton<IPasswordService, PasswordService>();

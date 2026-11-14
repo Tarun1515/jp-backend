@@ -3,7 +3,9 @@ using JP.Core.Constants;
 using JP.Core.Exceptions;
 using JP.Core.Extensions;
 using JP.Domain.Admin;
+using JP.Infrastructure.Address;
 using JP.Infrastructure.Repositories;
+using Microsoft.Extensions.Options;
 
 namespace JP.Infrastructure.Services;
 
@@ -93,6 +95,36 @@ public interface IAdminDeskService
     Task<string> ResolveEnquiryAsync(
         ClaimsPrincipal caller, long enquiryId, ResolveEnquiryRequest request,
         CancellationToken cancellationToken);
+
+    // ---- campus pins (SR-2) ------------------------------------------------
+
+    /// <summary>The campus-pin desk. 🔒 MODERATION.CAMPUS_PIN.</summary>
+    Task<(IReadOnlyList<CampusPinReviewDto> Rows, int Total)> SearchCampusPinsAsync(
+        ClaimsPrincipal caller, bool needsReviewOnly, bool includeCleared, string? search,
+        int pageNumber, int pageSize, CancellationToken cancellationToken);
+
+    /// <summary>One campus's pin and its trail, by the opaque reference.</summary>
+    Task<CampusPinReviewDto?> GetCampusPinAsync(
+        ClaimsPrincipal caller, string pinRef, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The campus a registration created, and its trail.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 TWO READS IN TWO DATABASES, PAIRED HERE. jp_mdm answers what request
+    /// this is; jp_app answers what campus it produced. Nothing joins them
+    /// (2.2) — the same shape the analytics screen uses.
+    /// </remarks>
+    Task<CampusPinReviewDto?> GetCampusPinByRequestAsync(
+        ClaimsPrincipal caller, long requestId, CancellationToken cancellationToken);
+
+    Task<string> CorrectCampusPinAsync(
+        ClaimsPrincipal caller, string pinRef, CorrectCampusPinRequest request,
+        CancellationToken cancellationToken);
+
+    Task<string> ClearCampusPinAsync(
+        ClaimsPrincipal caller, string pinRef, ClearCampusPinRequest request,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -117,7 +149,37 @@ internal sealed class AdminDeskService : IAdminDeskService
 {
     private readonly IAdminDeskRepository _desk;
 
-    public AdminDeskService(IAdminDeskRepository desk) => _desk = desk;
+    /*
+      SR-2. jp_mdm, for ONE purpose: turning the bigint RequestId the admin
+      route carries into the RequestUid jp_app stores on t_app_schools.
+
+      🔴 NOT A JOIN, AND IT CANNOT BE (2.2). The two databases answer two
+      questions and this class pairs the answers, which is the same thing
+      AdminAnalyticsService does across three of them. The alternative — a
+      SourceRequestUid lookup written as a cross-database join inside the jp_app
+      procedure — is the thing the decision forbids.
+    */
+    private readonly IApprovalRepository _approvals;
+
+    /*
+      SR-2. The review threshold, from configuration.
+
+      ⚠️ IOptions, NOT IOptionsMonitor. The value is read per call, so a change
+      to appsettings.json is picked up by the configuration provider's own
+      reload on the next request — there is nothing cached here to go stale, and
+      a monitor would imply a change notification nothing subscribes to.
+    */
+    private readonly IOptions<CampusPinReviewOptions> _pinReview;
+
+    public AdminDeskService(
+        IAdminDeskRepository desk,
+        IApprovalRepository approvals,
+        IOptions<CampusPinReviewOptions> pinReview)
+    {
+        _desk = desk;
+        _approvals = approvals;
+        _pinReview = pinReview;
+    }
 
     // ---- moderation --------------------------------------------------------
 
@@ -450,5 +512,217 @@ internal sealed class AdminDeskService : IAdminDeskService
         {
             throw new ForbiddenException("You do not have permission to manage website content.");
         }
+    }
+
+    // ---- campus pins (SR-2) ------------------------------------------------
+
+    public async Task<(IReadOnlyList<CampusPinReviewDto> Rows, int Total)> SearchCampusPinsAsync(
+        ClaimsPrincipal caller, bool needsReviewOnly, bool includeCleared, string? search,
+        int pageNumber, int pageSize, CancellationToken cancellationToken)
+    {
+        EnsureCanManageCampusPins(caller);
+
+        var result = await _desk
+            .SearchCampusPinsAsync(
+                _pinReview.Value.MaxDistanceKm,
+                branchUid: null,
+                sourceRequestUid: null,
+                needsReviewOnly,
+                includeCleared,
+                search,
+                pageNumber,
+                pageSize,
+                /*
+                  🔴 NO TRAIL ON THE LIST. Twenty trails for a page nobody has
+                  opened is twenty queries nobody asked for. The screens read an
+                  empty array beside a non-null LastActionOn as "not loaded".
+                */
+                includeTrail: false,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return (result.Rows, result.Total);
+    }
+
+    public async Task<CampusPinReviewDto?> GetCampusPinAsync(
+        ClaimsPrincipal caller, string pinRef, CancellationToken cancellationToken)
+    {
+        EnsureCanManageCampusPins(caller);
+
+        var branchUid = ParsePinRef(pinRef);
+
+        var result = await ReadOneCampusPinAsync(
+                branchUid: branchUid, sourceRequestUid: null, cancellationToken)
+            .ConfigureAwait(false);
+
+        return result;
+    }
+
+    public async Task<CampusPinReviewDto?> GetCampusPinByRequestAsync(
+        ClaimsPrincipal caller, long requestId, CancellationToken cancellationToken)
+    {
+        EnsureCanManageCampusPins(caller);
+
+        /*
+          🔴 STEP ONE, IN jp_mdm: what request is this? The admin route carries
+          the bigint RequestId the approval queue uses; jp_app stores
+          t_app_schools.SourceRequestUid, which is the request's UID. Nothing
+          may join the two (2.2), so the pairing happens here.
+
+          ⚠️ A REQUEST THAT DOES NOT EXIST IS null, NOT AN ERROR. The contract
+          is CampusPinReview | null, and "there is no campus for that request"
+          and "there is no such request" are the same answer from the client's
+          point of view — it has nothing to show either way, and distinguishing
+          them would tell a prober which request ids are real.
+        */
+        var detail = await _approvals.GetByIdAsync(requestId, cancellationToken).ConfigureAwait(false);
+
+        if (detail is null)
+        {
+            return null;
+        }
+
+        /* Step two, in jp_app: what campus did it produce? */
+        var row = await ReadOneCampusPinAsync(
+                branchUid: null, sourceRequestUid: detail.Header.RequestUid, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (row is not null)
+        {
+            /*
+              🔴 THE ONE PATH THAT CAN FILL THIS IN HONESTLY. jp_app does not
+              hold the bigint id and resolving it per row on the list would be a
+              cross-database lookup per row for a number the list does not show
+              (CampusPinReviewDto.RequestId says the same from the other side).
+              Here it is simply the id we were asked about.
+            */
+            row.RequestId = requestId;
+        }
+
+        return row;
+    }
+
+    public async Task<string> CorrectCampusPinAsync(
+        ClaimsPrincipal caller, string pinRef, CorrectCampusPinRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        EnsureCanManageCampusPins(caller);
+
+        var branchUid = ParsePinRef(pinRef);
+
+        /*
+          ⚠️ NOT VALIDATED HERE BEYOND THE REFERENCE. The coordinate range, the
+          empty remark, the unchanged pin and the missing campus are all refused
+          by the procedure with a named code (2.21), and EnsureSuccess maps each
+          one to the right exception. A second copy of those rules in C# would
+          be a second answer to the same question — and the procedure's is the
+          one that also protects a hand-run EXEC.
+        */
+        var result = (await _desk
+            .CorrectCampusPinAsync(
+                branchUid, request.Latitude, request.Longitude, request.Remarks,
+                caller.GetUserId(), cancellationToken)
+            .ConfigureAwait(false)).EnsureSuccess();
+
+        return result.Message;
+    }
+
+    public async Task<string> ClearCampusPinAsync(
+        ClaimsPrincipal caller, string pinRef, ClearCampusPinRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        EnsureCanManageCampusPins(caller);
+
+        var branchUid = ParsePinRef(pinRef);
+
+        var result = (await _desk
+            .ClearCampusPinAsync(branchUid, request.Remarks, caller.GetUserId(), cancellationToken)
+            .ConfigureAwait(false)).EnsureSuccess();
+
+        return result.Message;
+    }
+
+    /// <summary>
+    /// 🔒 MODERATION.CAMPUS_PIN — SUPER_ADMIN and MODERATION_ADMIN.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 THE SAME GATE FOR READING AND FOR ACTING, deliberately, and 025's
+    /// argument applies unchanged: browsing every campus on the platform with
+    /// its coordinates and its correction history is not a weaker act than
+    /// correcting one — it is the reading half of the same job.
+    ///
+    /// ⚠️ NOT VERIFICATION.SCHOOL, which was the first choice, and NOT
+    /// MODERATION.REPORT. AppConstants.PermissionCodes.ModerationCampusPin and
+    /// jp_sso/03_seed/009 both carry the argument; the short version is that a
+    /// verification is settled once before a school's first job, and a campus
+    /// pin is corrected years later about a campus that did not exist then.
+    /// </remarks>
+    private static void EnsureCanManageCampusPins(ClaimsPrincipal caller)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        if (!caller.HasPermission(AppConstants.PermissionCodes.ModerationCampusPin))
+        {
+            throw new ForbiddenException("You do not have permission to correct campus map pins.");
+        }
+    }
+
+    /// <summary>
+    /// Turns the opaque <c>pinRef</c> back into the identity the server put in
+    /// it.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 AN UNPARSEABLE REFERENCE IS NOT_FOUND, NEVER A 400. The format is the
+    /// server's business (the contract says so), so "that is not a valid pinRef"
+    /// would be the API publishing the format in an error message and telling a
+    /// prober when they had guessed the shape right. 2.6's rule: not found, and
+    /// never anything more specific.
+    ///
+    /// ⚠️ THE ONE PLACE THAT KNOWS THE FORMAT. When the desk gains
+    /// registration-sourced rows and the reference becomes a discriminated
+    /// string, this method changes and nothing else does — not the controller,
+    /// not the client.
+    /// </remarks>
+    private static Guid ParsePinRef(string pinRef)
+    {
+        if (!Guid.TryParse(pinRef, out var branchUid) || branchUid == Guid.Empty)
+        {
+            throw new NotFoundException("That campus was not found.");
+        }
+
+        return branchUid;
+    }
+
+    /// <summary>
+    /// A single campus-pin row with its trail attached, or null.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ includeCleared IS TRUE AND needsReviewOnly IS FALSE on both single
+    /// reads. A detail panel asked for a specific campus must answer about that
+    /// campus — filtering it out because it is cleared, or because its pin is
+    /// fine, would return null for a row the admin is looking at.
+    /// </remarks>
+    private async Task<CampusPinReviewDto?> ReadOneCampusPinAsync(
+        Guid? branchUid, Guid? sourceRequestUid, CancellationToken cancellationToken)
+    {
+        var result = await _desk
+            .SearchCampusPinsAsync(
+                _pinReview.Value.MaxDistanceKm,
+                branchUid,
+                sourceRequestUid,
+                needsReviewOnly: false,
+                includeCleared: true,
+                search: null,
+                pageNumber: 1,
+                pageSize: 1,
+                includeTrail: true,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return result.Rows.Count == 0 ? null : result.Rows[0];
     }
 }

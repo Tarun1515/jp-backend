@@ -327,3 +327,251 @@ public sealed class ResolveEnquiryRequest
     /// </summary>
     public string Remarks { get; set; } = string.Empty;
 }
+
+/*==============================================================================
+  SR-2 — THE CAMPUS-PIN DESK.
+
+  ----------------------------------------------------------------------------
+  🔴 PinRef IS AN OPAQUE STRING THE SERVER OWNS
+  ----------------------------------------------------------------------------
+  The client never builds one, parses one or compares two: it reads it off a
+  row and posts it straight back on correct or clear. Today it is a BranchUid
+  rendered as text. The day this desk also lists a registration that has no
+  campus row yet, it becomes a discriminated string and not one line of client
+  code changes.
+
+  ⚠️ WHICH IS WHY IT IS A string AND NOT A Guid. A Guid property would publish
+  the format in the contract, and the first client to construct one from a
+  branch uid it got somewhere else would break on the day above.
+
+  ----------------------------------------------------------------------------
+  🔴 THREE THINGS IN THIS SHAPE THAT ARE NOT NEGOTIABLE
+  ----------------------------------------------------------------------------
+  THE THRESHOLD IS ON THE ROW. ThresholdKm travels with every row rather than
+  living in a client constant. A client copy of a server setting is silently
+  wrong the day the server is configured to anything else, and the screen would
+  then explain the queue using the wrong number — "4.1 km, over the 3 km limit"
+  beside a row that is listed because the limit is now 4.
+
+  NeedsReview IS NOT DistanceKm > ThresholdKm. A CLEARED pin is a large distance
+  an administrator has judged correct — a big site with its gate on another
+  road, a village address that geocodes to the panchayat office. If the row
+  carried only the comparison, that judgement would have nowhere to live and the
+  same campus would be back on the queue tomorrow, for ever. IsCleared sits
+  beside it so a screen can explain a large distance that needs no action.
+
+  CORRECT AND CLEAR ARE SEPARATE ACTS. Correct overwrites the coordinates and
+  records the previous pair; clear changes nothing at all and records that
+  somebody decided the distance was fine. Posting the unchanged pin back through
+  correct would write a correction that corrected nothing, and the trail would
+  read "corrected by X" about somebody who deliberately did not move it — so
+  USP_CorrectCampusPin refuses an unchanged pin by name and says to clear it
+  instead.
+==============================================================================*/
+
+/// <summary>
+/// One campus's pin, measured against the geocoded point of its own stated
+/// address.
+/// </summary>
+public sealed class CampusPinReviewDto
+{
+    /// <summary>
+    /// 🔴 OPAQUE. Echo it back on correct and clear; never parse it. See the
+    /// block above.
+    /// </summary>
+    public string PinRef { get; set; } = string.Empty;
+
+    public Guid SchoolUid { get; set; }
+
+    public string SchoolName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// ⚠️ Nullable in the contract although t_app_school_branches.BranchName is
+    /// NOT NULL — the nullability is for the registration-sourced row that has
+    /// no campus yet, so a client written against this shape does not have to
+    /// change when one appears.
+    /// </summary>
+    public string? CampusName { get; set; }
+
+    public bool IsHeadOffice { get; set; }
+
+    /// <summary>The two address lines, joined, or null when both are empty.</summary>
+    public string? AddressLine { get; set; }
+
+    public string? CityName { get; set; }
+
+    /// <summary>Where the school PINNED the campus.</summary>
+    public decimal? Latitude { get; set; }
+
+    public decimal? Longitude { get; set; }
+
+    /// <summary>
+    /// Where the address the school STATED geocodes to — the anchor.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 NOT the town centre. 038's header measures every coordinate in the
+    /// database and says why none of the existing ones would do; these two
+    /// columns were added by that file because the product stored no such
+    /// point. Null until the address-lookup path writes one, which is SR-3 — so
+    /// a row with a pin and no anchor reports no distance and needs no review,
+    /// which is honest rather than reassuring.
+    /// </remarks>
+    public decimal? AnchorLatitude { get; set; }
+
+    public decimal? AnchorLongitude { get; set; }
+
+    /// <summary>
+    /// The distance between the two, in kilometres. Null when there is nothing
+    /// to measure.
+    /// </summary>
+    public decimal? DistanceKm { get; set; }
+
+    /// <summary>🔴 The CONFIGURED threshold, on the row. See the block above.</summary>
+    public decimal ThresholdKm { get; set; }
+
+    /// <summary>
+    /// 🔴 Too far AND not already judged correct. Never the bare comparison.
+    /// </summary>
+    public bool NeedsReview { get; set; }
+
+    /// <summary>
+    /// An administrator has recorded that this exact pin's distance is correct.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ "THIS EXACT PIN". The judgement is derived from a CLEAR trail row
+    /// whose previous pin EQUALS the one that is there now, so it lapses by
+    /// itself if the school later moves the pin — no column to go stale and no
+    /// sweep to forget to run (038's header).
+    /// </remarks>
+    public bool IsCleared { get; set; }
+
+    /// <summary>When the anchor was geocoded.</summary>
+    /// <remarks>
+    /// ⚠️ SHOWN BESIDE <see cref="CampusModifiedOn"/> ON PURPOSE. An address
+    /// edited after its geocode was taken leaves a STALE anchor, and nothing
+    /// can prevent that without re-geocoding on every edit. What an admin can
+    /// do is notice that the anchor predates the last change to the campus — so
+    /// both timestamps travel, rather than a "stale" flag that would have to
+    /// pick a tolerance.
+    /// </remarks>
+    public DateTime? AnchorTakenOn { get; set; }
+
+    public DateTime? CampusModifiedOn { get; set; }
+
+    /// <summary><c>CORRECT</c>, <c>CLEAR</c> or null.</summary>
+    public string? LastActionType { get; set; }
+
+    public long? LastActionByUserId { get; set; }
+
+    public DateTime? LastActionOn { get; set; }
+
+    /// <summary>
+    /// The registration request this campus came from, when the row was fetched
+    /// by request.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ NULL ON THE LIST, AND THAT IS NOT LAZINESS. jp_app stores
+    /// t_app_schools.SourceRequestUid — the request's UID, not its bigint id —
+    /// and may not join to jp_mdm (2.2). Resolving the id for every row would be
+    /// a cross-database lookup per row to render a number the list does not
+    /// show. The by-request read already knows the id it was asked about, so it
+    /// is the one path that can fill this in honestly.
+    /// </remarks>
+    public long? RequestId { get; set; }
+
+    /// <summary>What administrators have done to this pin, newest first.</summary>
+    /// <remarks>
+    /// ⚠️ EMPTY ON THE LIST — twenty trails for a page nobody opened is twenty
+    /// queries nobody asked for. The single-row reads populate it. An empty
+    /// array beside a non-null <see cref="LastActionOn"/> means "not loaded",
+    /// never "nothing happened".
+    /// </remarks>
+    public IReadOnlyList<CampusPinActionDto> Trail { get; set; } = [];
+}
+
+/// <summary>
+/// One entry in a campus pin's trail, from the append-only
+/// <c>t_app_branch_pin_review_log</c>.
+/// </summary>
+public sealed class CampusPinActionDto
+{
+    public long LogId { get; set; }
+
+    /// <summary><c>CORRECT</c> or <c>CLEAR</c>.</summary>
+    public string ActionType { get; set; } = string.Empty;
+
+    public long? ActionByUserId { get; set; }
+
+    public DateTime ActionOn { get; set; }
+
+    /// <summary>
+    /// 🔴 Required at the database (NOT NULL with a non-empty CHECK) and both
+    /// procedures refuse an empty one. Nullable here only because the
+    /// school-facing read shares this shape.
+    /// </summary>
+    public string? Remarks { get; set; }
+
+    /// <summary>The pin as it stood when the action happened.</summary>
+    /// <remarks>
+    /// On a CORRECT this is what makes it reversible. On a CLEAR it is the
+    /// SUBJECT of the judgement — the pin that was declared correct — which is
+    /// how "cleared" is derived without a flag on the campus.
+    /// </remarks>
+    public decimal? PreviousLatitude { get; set; }
+
+    public decimal? PreviousLongitude { get; set; }
+
+    /// <summary>
+    /// What it was set to. 🔴 NULL FOR A CLEAR, because a clear sets nothing.
+    /// </summary>
+    public decimal? NewLatitude { get; set; }
+
+    public decimal? NewLongitude { get; set; }
+
+    /// <summary>The anchor as it stood, copied — never joined live.</summary>
+    /// <remarks>
+    /// ⚠️ A log that joined the anchor live would silently re-tell its own past
+    /// after a re-geocode: "corrected because it was 9km out" rendered as 300m
+    /// out, with no record that anything moved.
+    /// </remarks>
+    public decimal? AnchorLatitude { get; set; }
+
+    public decimal? AnchorLongitude { get; set; }
+
+    /// <summary>
+    /// The distance that justified the action, in METRES as the log stores it.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Metres here and kilometres on <see cref="CampusPinReviewDto"/>,
+    /// deliberately: the row is a live measurement for a person to read, and the
+    /// log is a record of what STDistance returned. Converting on the way into
+    /// an append-only table would store a rounded figure derived from the real
+    /// one, for ever.
+    /// </remarks>
+    public int? DistanceMetres { get; set; }
+}
+
+/// <summary>An administrator moving a campus pin.</summary>
+public sealed class CorrectCampusPinRequest
+{
+    public decimal Latitude { get; set; }
+
+    public decimal Longitude { get; set; }
+
+    /// <summary>
+    /// 🔴 REQUIRED, and the school is shown it. 034's floor: an action nobody
+    /// can explain later is the one that becomes an argument, and this one
+    /// overwrites a figure the school supplied.
+    /// </summary>
+    public string Remarks { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// An administrator recording that a campus pin's distance from its stated
+/// address is correct. 🔴 Moves nothing.
+/// </summary>
+public sealed class ClearCampusPinRequest
+{
+    /// <summary>🔴 REQUIRED. "Why is 9km correct?" is the whole content here.</summary>
+    public string Remarks { get; set; } = string.Empty;
+}

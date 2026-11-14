@@ -155,6 +155,112 @@ BEGIN
         SELECT @Code = 'VALIDATION_FAILED',
                @Message = N'The school name is required.';
 
+    /*==========================================================================
+      SR-3 — SIX REGISTRATION FIELDS BECOME COMPULSORY.
+
+      School type · Board · Affiliation number · Registration number · PAN ·
+      Established year.
+
+      ------------------------------------------------------------------------
+      🔴 A REFUSAL NAMES THE FIELD (2.21). SIX MESSAGES, NOT ONE.
+      ------------------------------------------------------------------------
+      One "please complete all required fields" is a message that makes the
+      person re-read a six-step form looking for the box they missed. Each of
+      these names exactly one field, so the client can scroll to it and the
+      sentence is useful even in a log with no form beside it.
+
+      ⚠️ THE ORDER IS THE FORM'S ORDER, not the column order, so somebody
+      filling it in top to bottom is told about the first thing they missed
+      rather than the last.
+
+      ------------------------------------------------------------------------
+      🔴 THIS IS ONE OF *TWO* SUBMIT PATHS, AND BOTH NEEDED IT
+      ------------------------------------------------------------------------
+      This procedure is the form posted straight through. The registration the
+      product actually ships goes through USP_SubmitRegistrationDraft
+      (007_registration_drafts.sql), which promotes a DRAFT to Pending and had
+      its own validation chain checking the school name and nothing else.
+
+      Enforcing here alone would have left the real path wide open — a school
+      could save a draft with all six blank and submit it, and every message
+      below would be unreachable in production. 007 now carries the same six
+      rules against the stored row.
+
+      ⚠️ EXISTENCE OF THE IDS IS NOT CHECKED HERE, deliberately.
+      t_mdm_school_registration_details has foreign keys on SchoolTypeId and
+      BoardId, so an id that is not a real master row is already refused — by
+      the database, in one place, rather than by a second EXISTS here that
+      could fall out of step with the master's own Is_Active rules.
+    ==========================================================================*/
+    ELSE IF @RequestTypeId IN (1, 3) AND ISNULL(@SchoolTypeId, 0) <= 0
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The school type is required.';
+    ELSE IF @RequestTypeId IN (1, 3) AND ISNULL(@BoardId, 0) <= 0
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The board is required.';
+    ELSE IF @RequestTypeId IN (1, 3) AND LEN(LTRIM(RTRIM(ISNULL(@AffiliationNumber, '')))) = 0
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The affiliation number is required.';
+    ELSE IF @RequestTypeId IN (1, 3) AND LEN(LTRIM(RTRIM(ISNULL(@RegistrationNo, '')))) = 0
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The registration number is required.';
+    ELSE IF @RequestTypeId IN (1, 3) AND LEN(LTRIM(RTRIM(ISNULL(@PanNumber, '')))) = 0
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The PAN is required.';
+
+    /*
+      🔴 FIVE LETTERS, FOUR DIGITS, ONE LETTER — AAAAA9999A.
+
+      ⚠️ THE MESSAGE IS WORD FOR WORD ApprovalService.NormalisePan's. That
+      method already uppercases and format-checks the PAN on BOTH submit paths
+      before it reaches here, so in production this branch is a backstop rather
+      than the first line — and a backstop that worded the same refusal
+      differently would make the API's own answer depend on which layer caught
+      it, which 2.12 forbids reasoning about and a user would simply find
+      confusing.
+
+      ⚠️ UPPER() FIRST, THEN A BIN2 PATTERN. Under the database's default
+      CI collation, '[A-Z]' matches lowercase too, so the pattern alone would
+      accept 'abcde1234f' — which the C# layer would never have sent, and which
+      a hand-run EXEC would slip through. UPPER() normalises the case and BIN2
+      makes the ranges mean code points, so the rule is exact instead of
+      accidentally lenient.
+
+      ⚠️ Ten single-character classes and NO wildcard, so the pattern also fixes
+      the LENGTH at ten. A separate LEN() check would be a second thing to keep
+      in step with the pattern.
+    */
+    ELSE IF @RequestTypeId IN (1, 3)
+        AND UPPER(LTRIM(RTRIM(@PanNumber))) COLLATE Latin1_General_BIN2
+            NOT LIKE '[A-Z][A-Z][A-Z][A-Z][A-Z][0-9][0-9][0-9][0-9][A-Z]'
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'That does not look like a PAN. It is ten characters: five letters, four digits, then a letter — for example ABCDE1234F.';
+
+    ELSE IF @RequestTypeId IN (1, 3) AND @EstablishedYear IS NULL
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The year the school was established is required.';
+
+    /*
+      🔴 1800 TO THIS YEAR, AND "THIS YEAR" IS THE IST YEAR (2.28).
+
+      YEAR(GETUTCDATE()) would be the previous year between 00:00 and 05:30 IST
+      on 1 January, and a school founded in the year that has just begun would
+      be refused for the first five and a half hours of it — once a year, at
+      the time nobody is watching. dbo.fn_IstToday() is the helper this file
+      already uses to number requests for exactly this reason.
+
+      ⚠️ THE COLUMN'S CHECK ALLOWS UP TO 2200 and stays that way. A constraint
+      cannot know what year it is — a CHECK against YEAR(GETDATE()) is
+      non-deterministic and SQL Server will not accept it — so the column keeps
+      a loose sanity range and the TIGHT rule lives here, where it can be
+      stated in a sentence and can name the year.
+    */
+    ELSE IF @RequestTypeId IN (1, 3)
+        AND (@EstablishedYear < 1800 OR @EstablishedYear > YEAR(dbo.fn_IstToday()))
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The year the school was established must be between 1800 and '
+                        + CAST(YEAR(dbo.fn_IstToday()) AS nvarchar(4)) + N'.';
+
     /*--------------------------------------------------------------------------
       2. ALREADY PENDING? Return it rather than creating a second.
 

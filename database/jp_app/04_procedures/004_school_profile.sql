@@ -222,9 +222,84 @@ BEGIN
             @Message nvarchar(400) = NULL, @Id bigint = @SchoolId,
             @Now datetime2 = SYSUTCDATETIME();
 
+    /*==========================================================================
+      SR-3 — NORMALISE THE SIX COMPULSORY FIELDS BEFORE ANYTHING LOOKS AT THEM.
+
+      🔴 THIS BLOCK IS WHAT MAKES THE RULES BELOW SAFE FOR EXISTING SCHOOLS, and
+      it is not tidying. The profile screen has FIVE section save buttons —
+      basic details, about, facilities, gallery, contact — and every one of them
+      posts the WHOLE row. So these six parameters arrive on a save about a
+      photograph, carrying whatever the form happened to hold.
+
+      Which means "blank" has to mean the same thing on both sides of every
+      comparison, or an old school loses the ability to save anything:
+
+          NULL        no value              -> blank
+          ''          an empty box          -> blank
+          '   '       an empty box, typed   -> blank
+          0           an empty NUMBER box   -> blank
+
+      🔴 THE LAST ONE IS THE TRAP, AND IT IS NOT HYPOTHETICAL. An Angular number
+      input bound to a cleared field can post 0 rather than null. Without
+      NULLIF(..., 0) below, an EstablishedYear of 0 is "present" — it skips the
+      removal rule and then fails the 1800..this-year range, so a school with no
+      established year would be refused a save of its phone number, with a
+      message about a year it never typed. The id fields are the same shape and
+      would additionally hit a foreign key.
+
+      ⚠️ UPPER() ON THE PAN, DEFENSIVELY. ApprovalService has normalised it on
+      the way in for a while and the school client now sends it uppercase — but
+      rows written before either of those are stored as they were typed. A
+      lower-case PAN from 2026 must not be refused by a rule it predates, so the
+      case is fixed here rather than tested for.
+
+      ⚠️ AND THE NORMALISED VALUE IS WHAT GETS WRITTEN, which means an unrelated
+      save quietly uppercases and trims these six. That is a real side effect,
+      stated: it changes no meaning, it makes the column consistent, and the
+      alternative is validating one value and storing another.
+    ==========================================================================*/
+    SET @SchoolTypeId      = NULLIF(@SchoolTypeId, 0);
+    SET @BoardId           = NULLIF(@BoardId, 0);
+    SET @AffiliationNumber = NULLIF(LTRIM(RTRIM(@AffiliationNumber)), '');
+    SET @RegistrationNo    = NULLIF(LTRIM(RTRIM(@RegistrationNo)), '');
+    SET @PanNumber         = NULLIF(UPPER(LTRIM(RTRIM(@PanNumber))), '');
+    SET @EstablishedYear   = NULLIF(@EstablishedYear, 0);
+
     DECLARE @CurrentRowVersion int = NULL, @IsSuspended tinyint = NULL;
 
-    SELECT @CurrentRowVersion = s.RowVersion, @IsSuspended = s.IsSuspended
+    /*
+      SR-3. The STORED values of the six fields that became compulsory at
+      registration, read so this procedure can tell an edit OF one of them from
+      an edit that merely carries one along. See the block below — without
+      these, the only rules expressible here are the ones that break every
+      existing school.
+    */
+    DECLARE @StoredSchoolTypeId      int         = NULL,
+            @StoredBoardId           int         = NULL,
+            @StoredAffiliationNumber varchar(50) = NULL,
+            @StoredRegistrationNo    varchar(50) = NULL,
+            @StoredPanNumber         varchar(10) = NULL,
+            @StoredEstablishedYear   smallint    = NULL;
+
+    /*
+      🔴 NORMALISED THE SAME WAY THE INCOMING VALUES WERE, AND THAT SYMMETRY IS
+      THE POINT. After this, "blank" is exactly "IS NULL" on BOTH sides, so
+      every rule below is a two-term test a reader can check by eye instead of
+      four nested ISNULL/LEN/LTRIM calls whose two halves could drift apart.
+
+      ⚠️ A stored 0 or a stored '   ' is as blank as a stored NULL. Neither
+      should exist — the foreign keys and the year CHECK make them nearly
+      impossible — but a row that has one must not become uneditable because
+      the comparison counted it as a value worth protecting.
+    */
+    SELECT @CurrentRowVersion        = s.RowVersion,
+           @IsSuspended              = s.IsSuspended,
+           @StoredSchoolTypeId       = NULLIF(s.SchoolTypeId, 0),
+           @StoredBoardId            = NULLIF(s.BoardId, 0),
+           @StoredAffiliationNumber  = NULLIF(LTRIM(RTRIM(s.AffiliationNumber)), ''),
+           @StoredRegistrationNo     = NULLIF(LTRIM(RTRIM(s.RegistrationNo)), ''),
+           @StoredPanNumber          = NULLIF(UPPER(LTRIM(RTRIM(s.PanNumber))), ''),
+           @StoredEstablishedYear    = NULLIF(s.EstablishedYear, 0)
     FROM dbo.t_app_schools s
     WHERE s.SchoolId = @SchoolId AND s.Is_Deleted = 0;
 
@@ -240,6 +315,175 @@ BEGIN
     ELSE IF @CurrentRowVersion <> @RowVersion
         SELECT @Code = 'CONCURRENCY_CONFLICT',
                @Message = N'Somebody else changed this school while you were editing it. Reload and try again.';
+
+    /*==========================================================================
+      SR-3 — THE SIX COMPULSORY FIELDS, ON THE **EDIT** PATH.
+
+      ------------------------------------------------------------------------
+      🔴 AN EXISTING SCHOOL WITH A BLANK PAN MUST STILL BE ABLE TO SAVE ITS
+      WEBSITE. THAT CONSTRAINT DECIDES THE WHOLE SHAPE OF THESE RULES.
+      ------------------------------------------------------------------------
+      The six fields are required to REGISTER. Schools approved before that
+      rule existed have blanks in them — legitimately, because nobody was ever
+      asked (036's rule, 029's column comment: "blocking registration on a
+      field an admin can chase later costs more sign-ups than it saves").
+
+      🔴 AND THIS PROCEDURE IS A BLANKET OVERWRITE REACHED BY FIVE DIFFERENT
+      BUTTONS. The school profile screen has five section saves — basic details,
+      about, facilities, gallery, contact — and every one of them posts the
+      WHOLE row, including the blank PAN the page loaded. Measured on the client
+      side, not assumed.
+
+      So the obvious rule — "the six fields are required here too" — would
+      refuse a save of the school's PHOTOGRAPHS with a message about a PAN
+      nobody touched, on a row that has been like that for a year. Every old
+      school would become unable to edit ANYTHING on that page: not its about
+      text, not its facilities, not its phone number. The first symptom would be
+      a support ticket saying "I cannot change my phone number", and the cause
+      would be the validation added to improve the data.
+
+      ⚠️ THE CLIENT CANNOT SOLVE THIS ALONE, and it already does its half: the
+      school app validates one of the six only when the value on screen differs
+      from the one the page loaded. But the payload still carries the unchanged
+      blanks, so only this procedure can tell an unchanged blank from a
+      newly-cleared one. Both halves are needed and they state the same rule.
+
+      ------------------------------------------------------------------------
+      🔴 SO THE RULE IS: REFUSE A VALUE THAT IS WORSE THAN THE STORED ONE.
+      NEVER REFUSE AN ABSENCE THAT WAS ALREADY ABSENT.
+      ------------------------------------------------------------------------
+      Two things are refused, and nothing else:
+
+        1. CLEARING a compulsory field that HAS a value. That is an edit OF the
+           field, and it takes a complete school and makes it incomplete.
+        2. A value that is PRESENT and MALFORMED — a PAN that is not a PAN, a
+           year outside 1800..this year. Also an edit OF the field.
+
+      And the case that decides it: stored blank, submitted blank — PASSES. The
+      school is no worse than it was, the edit is about something else, and the
+      only thing a refusal would achieve is stopping a correction nobody asked
+      them to make.
+
+      Worked through, per field, so the claim is checkable rather than asserted:
+
+        stored      submitted    outcome    why
+        ----------- ------------ ---------- --------------------------------
+        NULL        NULL         SAVES      an old row, an unrelated edit
+        NULL        'ABCDE1234F' SAVES      they filled it in. The good case.
+        NULL        'rubbish'    REFUSED    they filled it in wrongly
+        'ABCDE1234F' same        SAVES      carried along untouched
+        'ABCDE1234F' NULL        REFUSED    clearing a compulsory field
+        'ABCDE1234F' 'rubbish'   REFUSED    malformed
+
+      ⚠️ NOTHING HERE CAN REFUSE A SAVE THAT LEAVES THE SIX FIELDS AS THEY
+      WERE. Every branch below is guarded on either the stored value being
+      present (cases 5) or the submitted value being present (cases 3 and 6).
+      An unrelated update reaches none of them.
+
+      ------------------------------------------------------------------------
+      ⚠️ SAME SIX MESSAGES AS THE TWO SUBMIT PATHS, PLUS TWO THIS PATH NEEDS
+      ------------------------------------------------------------------------
+      The malformed-PAN and bad-year messages are word for word 001's and
+      007's. The CLEARING refusals are new sentences, because "the PAN is
+      required" is not what happened — they had one and are removing it, and a
+      message that does not say so sends somebody looking for an empty box that
+      is not empty.
+
+      Registration's wording is reused where the situation is the same, and not
+      where it is not.
+    ==========================================================================*/
+
+    /* ----------------------------------------------------------------------
+      1. CLEARING A COMPULSORY FIELD THAT HAS A VALUE.
+
+      🔴 THIS IS THE "DIFFERS FROM STORED" RULE IN ITS REDUCED FORM, and the
+      reduction is worth writing out because a reader will otherwise look for a
+      comparison that is not here:
+
+          refuse when  (incoming DIFFERS from stored)  AND  (incoming is blank)
+
+      If the incoming value is blank, then it differs from the stored value if
+      and only if the stored value is NOT blank. So the first term collapses
+      into the second and the rule becomes:
+
+          refuse when  (stored is not blank)  AND  (incoming is blank)
+
+      which is what each branch below says. The two forms are the same test;
+      this one cannot be got wrong by comparing a NULL to an empty string,
+      because after the normalisation above both sides are NULL or neither is.
+
+      ⚠️ AND THE CASE THAT MATTERS: stored blank, incoming blank — no branch
+      fires, the save proceeds. That is the old school correcting its phone
+      number. NULL -> '' is not an edit, because '' was normalised to NULL
+      before anything compared them.
+    ---------------------------------------------------------------------- */
+    ELSE IF @StoredSchoolTypeId IS NOT NULL AND @SchoolTypeId IS NULL
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The school type cannot be removed. Choose the one that applies.';
+    ELSE IF @StoredBoardId IS NOT NULL AND @BoardId IS NULL
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The board cannot be removed. Choose the one that applies.';
+    ELSE IF @StoredAffiliationNumber IS NOT NULL AND @AffiliationNumber IS NULL
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The affiliation number cannot be removed.';
+    ELSE IF @StoredRegistrationNo IS NOT NULL AND @RegistrationNo IS NULL
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The registration number cannot be removed.';
+    ELSE IF @StoredPanNumber IS NOT NULL AND @PanNumber IS NULL
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The PAN cannot be removed.';
+    ELSE IF @StoredEstablishedYear IS NOT NULL AND @EstablishedYear IS NULL
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The year the school was established cannot be removed.';
+
+    /* ----------------------------------------------------------------------
+      2. A VALUE THAT IS PRESENT AND MALFORMED.
+
+      🔴 THIS ONE DOES NOT CARE WHETHER IT CHANGED. A bad PAN is a bad PAN, and
+      a save that carries one along is a save that re-asserts it. The guard that
+      keeps old rows editable is the PRESENCE test, not a comparison: a school
+      with no PAN sends no PAN, which after normalisation is NULL, and NULL
+      reaches neither branch below.
+
+      ⚠️ Which also means a row that already holds a malformed PAN — written
+      before any of this existed — becomes uneditable until the PAN is fixed or
+      removed... and removing it is refused by rule 1 above, because it is
+      present. Stated rather than hidden: the escape is to correct it, which is
+      the right outcome, and it is reachable from the same form. There is no
+      such row today (ApprovalService has format-checked every PAN on the way in
+      since SR-0), so this is a dead corner rather than a live problem.
+    ---------------------------------------------------------------------- */
+
+    /*
+      ⚠️ Latin1_General_BIN2, for 001's reason: under the database's default CI
+      collation '[A-Z]' matches lowercase too, so the pattern alone would accept
+      'abcde1234f'. The value was already uppercased by the normalisation above
+      — which is what stops an old lower-case row being refused by a rule it
+      predates — and BIN2 then makes the ranges mean code points.
+
+      ⚠️ Ten single-character classes and NO wildcard, so the pattern also fixes
+      the LENGTH at ten. A separate LEN() check would be a second thing to keep
+      in step with it.
+    */
+    ELSE IF @PanNumber IS NOT NULL
+        AND @PanNumber COLLATE Latin1_General_BIN2
+            NOT LIKE '[A-Z][A-Z][A-Z][A-Z][A-Z][0-9][0-9][0-9][0-9][A-Z]'
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'That does not look like a PAN. It is ten characters: five letters, four digits, then a letter — for example ABCDE1234F.';
+
+    /*
+      ⚠️ THE IST YEAR (2.28), the same as both submit paths. jp_app has its own
+      copy of fn_IstToday (04_procedures\000_fn_datetime_ist.sql, the file whose
+      header says all three databases' copies must agree), so this is the same
+      definition of "this year" the registration used — which matters, because
+      a school registered on 1 January must be able to edit itself on
+      1 January.
+    */
+    ELSE IF @EstablishedYear IS NOT NULL
+        AND (@EstablishedYear < 1800 OR @EstablishedYear > YEAR(dbo.fn_IstToday()))
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'The year the school was established must be between 1800 and '
+                        + CAST(YEAR(dbo.fn_IstToday()) AS nvarchar(4)) + N'.';
 
     IF @Code IS NULL
     BEGIN
