@@ -264,6 +264,21 @@ public static class ErrorCodes
     public const string FileTooLarge = "FILE_TOO_LARGE";
     public const string FileTypeNotAllowed = "FILE_TYPE_NOT_ALLOWED";
 
+    /// <summary>
+    /// A submission is missing a document <c>m_mdm_document_types.IsMandatory</c>
+    /// marks as required. The message always NAMES the document (2.21).
+    /// </summary>
+    /// <remarks>
+    /// 🔴 The same code on both sides of the product — school registration
+    /// (<c>USP_SubmitRegistrationDraft</c>) and teacher verification — because
+    /// it is the same rule read from the same master column. A client handling
+    /// one handles both.
+    /// </remarks>
+    public const string DocumentRequired = "DOCUMENT_REQUIRED";
+
+    /// <summary>The teacher already carries the verified badge.</summary>
+    public const string AlreadyVerified = "ALREADY_VERIFIED";
+
     /// <summary>Unhandled server fault. Never carries internal detail to the client.</summary>
     public const string InternalError = "INTERNAL_ERROR";
 }

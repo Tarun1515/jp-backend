@@ -1,4 +1,5 @@
 using JP.Core.Common;
+using JP.Domain.Approvals;
 using JP.Domain.Teachers;
 using JP.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -32,10 +33,14 @@ namespace JP.App.Api.Controllers;
 public sealed class TeacherController : ControllerBase
 {
     private readonly ITeacherProfileService _teachers;
+    private readonly ITeacherVerificationService _verification;
 
-    public TeacherController(ITeacherProfileService teachers)
+    public TeacherController(
+        ITeacherProfileService teachers,
+        ITeacherVerificationService verification)
     {
         _teachers = teachers;
+        _verification = verification;
     }
 
     /// <summary>The teacher's own view — everything, including the resume path.</summary>
@@ -201,6 +206,80 @@ public sealed class TeacherController : ControllerBase
     {
         await _teachers.DeleteDocumentAsync(id, User, cancellationToken).ConfigureAwait(false);
         return Ok(ApiResponse.Success("Document removed."));
+    }
+
+    // =========================================================================
+    // D6 — ASKING TO BE VERIFIED
+    //
+    // 🔴 THIS DID NOT EXIST. Nothing in the product created a TEACHER_VERIFY
+    // approval request: measured 15 Nov 2026, calls to `approvals/submit` across
+    // all three authenticated apps came to ZERO, and the type-2 rows in the
+    // admin queue were seed rows. A teacher uploaded documents, saw a "needed"
+    // chip beside the mandatory ones, and had no way to send them anywhere. The
+    // whole approval path behind this — queue, document review,
+    // USP_SetTeacherVerified, the badge — was reachable only by hand.
+    //
+    // ⚠️ VERIFICATION IS NOT A GATE (2.9). Nothing here blocks a teacher from
+    // registering, building a profile or applying for jobs. This asks for a
+    // badge, and that is the only thing a refusal below costs.
+    //
+    // 🔒 NO AADHAAR OR PAN NUMBER IS ACCEPTED, RETURNED OR STORED (2.50).
+    // Neither endpoint has a request body. The readiness DTO carries a document
+    // type's NAME and a count, and no table underneath has a column that could
+    // hold either number.
+    // =========================================================================
+
+    /// <summary>
+    /// Whether this teacher can ask to be verified yet.
+    /// </summary>
+    /// <remarks>
+    /// Lets the profile screen offer the button only when pressing it would
+    /// work, and name the missing document when it would not — rather than
+    /// discovering both from a refusal (2.62).
+    /// </remarks>
+    [HttpGet("verification")]
+    [ProducesResponseType(typeof(Response<TeacherVerificationReadinessDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetVerificationReadiness(CancellationToken cancellationToken)
+    {
+        var readiness = await _verification
+            .GetReadinessAsync(User, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(readiness));
+    }
+
+    /// <summary>
+    /// Submits this teacher's profile for verification.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 NO REQUEST BODY, DELIBERATELY. Everything it needs — which teacher,
+    /// which documents, which name — is read from the token and the profile.
+    /// There is nothing a caller could substitute.
+    /// </para>
+    /// <para>
+    /// ⚠️ IDEMPOTENT. A request already awaiting review is returned rather than
+    /// duplicated, with <c>alreadyPending = true</c>. A double-tapped button is
+    /// not an error.
+    /// </para>
+    /// <para>
+    /// Refuses with <c>DOCUMENT_REQUIRED</c>, naming the document, when a
+    /// mandatory one is missing — the same code and the same master column the
+    /// school registration path uses.
+    /// </para>
+    /// </remarks>
+    [HttpPost("verification")]
+    [ProducesResponseType(typeof(Response<SubmitApprovalResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(Response<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RequestVerification(CancellationToken cancellationToken)
+    {
+        var result = await _verification
+            .RequestAsync(User, HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(ApiResponse.Success(result, result.Message));
     }
 
     // =========================================================================

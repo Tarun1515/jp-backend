@@ -221,6 +221,12 @@ public static class DependencyInjection
         services.AddScoped<ITeacherDirectoryService, TeacherDirectoryService>();
         services.AddScoped<ITeacherProvisioningService, TeacherProvisioningService>();
 
+        // D6. The teacher's way of asking to be verified, which did not exist:
+        // nothing in the product created a TEACHER_VERIFY request, so the whole
+        // approval path behind it was unreachable. Depends on IApprovalService,
+        // registered below — no cycle, ApprovalService has no teacher dependency.
+        services.AddScoped<ITeacherVerificationService, TeacherVerificationService>();
+
         // ---- Phase 3G: school team --------------------------------------
         // ⚠️ SchoolTeamService writes to jp_app AND jp_sso, so it depends on
         // repositories for both. That is the shape decision 2.2 requires: two

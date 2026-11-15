@@ -586,6 +586,48 @@ BEGIN
                @Message = N'The year the school was established must be between 1800 and '
                         + CAST(YEAR(dbo.fn_IstToday()) AS nvarchar(4)) + N'.';
 
+
+    /*==========================================================================
+      🔴 THE MANDATORY DOCUMENTS — ENFORCED HERE, FOR THE FIRST TIME.
+
+      m_mdm_document_types.IsMandatory shipped in Phase 1A and until today
+      nothing in the product read it back. Measured, live, inside a rollback:
+      this very draft with BOTH mandatory school documents missing and all six
+      mandatory fields completed answered
+
+          1 | NULL | Your registration has been submitted for review.
+
+      The browser was the only thing enforcing it — registration.component.ts
+      computes `missingMandatory` and disables the button. That is a courtesy
+      to somebody filling in a form, not a rule: `curl` never sees a disabled
+      button, and six requests already in the database are missing a document
+      the master calls mandatory.
+
+      ------------------------------------------------------------------------
+      ⚠️ THE LIST COMES FROM THE MASTER, NOT FROM HERE
+      ------------------------------------------------------------------------
+      fn_FirstMissingRequestDocument reads fn_MandatoryDocumentTypes, which is
+      the ONE definition of mandatory in the system — the teacher side's
+      USP_RequestTeacherVerification reads the same function. The client is
+      being asked (CLIENT_ASKS 1.4) to correct that column; when they do, both
+      paths change together and neither procedure is touched.
+
+      ⚠️ AFTER the field checks on purpose. Somebody filling the form in order
+      meets the fields before the upload step, so being told about a missing
+      document while a required field is still blank would send them to the
+      wrong screen.
+
+      🔴 IT NAMES THE DOCUMENT (2.21). "One or more required documents are
+      missing" makes a person re-open a six-step form hunting for the one they
+      missed; "We still need the Authorization Letter" is a sentence they can
+      act on, and it is useful in a log with no form beside it.
+    ==========================================================================*/
+    ELSE IF dbo.fn_FirstMissingRequestDocument(@RequestId) IS NOT NULL
+        SELECT @Code = 'DOCUMENT_REQUIRED',
+               @Message = N'We still need the '
+                        + dbo.fn_FirstMissingRequestDocument(@RequestId)
+                        + N'. Upload it and submit again.';
+
     ELSE IF EXISTS (SELECT 1 FROM dbo.t_mdm_approval_requests
                     WHERE RequestTypeId = @RequestTypeId AND EntityUid = @EntityUid
                       AND StatusId = @PENDING_STATUS AND Is_Deleted = 0)

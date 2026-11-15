@@ -43,9 +43,53 @@ internal sealed class TeacherContactRow
     public string? ContactMobile { get; set; }
 }
 
+/// <summary>
+/// Whether this teacher can ask to be verified, and if not which document is
+/// in the way.
+/// </summary>
+/// <remarks>
+/// <para>
+/// 🔒 NO IDENTITY NUMBER. <c>MissingDocument</c> is a document type's NAME, read
+/// from <c>m_mdm_document_types</c>. Nothing on this type, on the procedure that
+/// fills it, or on the tables underneath holds an Aadhaar or PAN number (2.50) —
+/// the document is the record and an admin's eyes are the verification.
+/// </para>
+/// <para>
+/// ⚠️ Not a <see cref="ProcResult"/>. The procedure READS; 2.21's
+/// Status/Code/Message envelope governs procedures that write. The refusal is
+/// composed a layer up, by the code that owns the wording for both outcomes.
+/// </para>
+/// </remarks>
+internal sealed class TeacherVerificationReadinessRow
+{
+    public Guid TeacherUid { get; set; }
+
+    public bool IsVerified { get; set; }
+
+    /// <summary>
+    /// Carried because <c>USP_SubmitApprovalRequest</c> refuses a teacher
+    /// request without it. Read from the row already being read, rather than
+    /// fetching the whole profile to copy one column.
+    /// </summary>
+    public string FullName { get; set; } = string.Empty;
+
+    public int DocumentCount { get; set; }
+
+    /// <summary>The first mandatory document not uploaded, or null when ready.</summary>
+    public string? MissingDocument { get; set; }
+}
+
 internal interface ITeacherRepository
 {
     Task<TeacherProfileDto?> GetProfileAsync(Guid userUid, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads whether this teacher's profile carries every document a
+    /// verification request cannot go in without.
+    /// </summary>
+    /// <returns>Null when the user is not a teacher.</returns>
+    Task<TeacherVerificationReadinessRow?> GetVerificationReadinessAsync(
+        Guid userUid, CancellationToken cancellationToken);
 
     Task<TeacherBrowseDto?> GetBrowseProfileAsync(Guid teacherUid, CancellationToken cancellationToken);
 
@@ -301,6 +345,22 @@ internal sealed class TeacherRepository : BaseRepository, ITeacherRepository
         p.Add("@DocumentId", documentId, DbType.Int64);
 
         return QuerySingleAsync<ProcResult>("USP_DeleteTeacherDocument", p, cancellationToken);
+    }
+
+    /*
+      ⚠️ QueryFirstOrDefault, NOT QuerySingle. The procedure returns NO ROWS
+      when the uid is not a teacher's, and that is its documented answer rather
+      than an error — QuerySingleAsync would turn it into a NotFoundException
+      with the base class's generic wording instead of the caller's own.
+    */
+    public Task<TeacherVerificationReadinessRow?> GetVerificationReadinessAsync(
+        Guid userUid, CancellationToken cancellationToken)
+    {
+        var p = new DynamicParameters();
+        p.Add("@UserUid", userUid, DbType.Guid);
+
+        return QueryFirstOrDefaultAsync<TeacherVerificationReadinessRow>(
+            "USP_GetTeacherVerificationReadiness", p, cancellationToken);
     }
 
     // ---- the three plain set syncs -----------------------------------------

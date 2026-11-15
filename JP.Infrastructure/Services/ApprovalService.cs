@@ -14,6 +14,29 @@ public interface IApprovalService
 {
     Task<SubmitApprovalResponse> SubmitAsync(SubmitApprovalRequest request, ClaimsPrincipal caller, string? ipAddress, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Submits a teacher verification request, having already established that
+    /// the teacher's mandatory documents are present.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 A SEPARATE DOOR, ON PURPOSE. <see cref="SubmitAsync"/> REFUSES request
+    /// type 2, because the mandatory-document rule for a teacher cannot be
+    /// enforced in the procedure — the documents live in jp_app and jp_mdm must
+    /// not read jp_app. The rule therefore lives in
+    /// <c>TeacherVerificationService</c>, and this is the only entry point that
+    /// gets past the refusal.
+    /// </para>
+    /// <para>
+    /// ⚠️ IT DOES NOT CHECK THE DOCUMENTS ITSELF, and the asymmetry is the
+    /// design: this method trusts its caller, and exactly one caller exists.
+    /// Putting the check here instead would mean this service reading teacher
+    /// documents, which is the coupling the arrangement exists to avoid.
+    /// </para>
+    /// </remarks>
+    Task<SubmitApprovalResponse> SubmitTeacherVerificationAsync(
+        Guid teacherUid, string fullName, ClaimsPrincipal caller, string? ipAddress, CancellationToken cancellationToken);
+
     Task<PagedResult<ApprovalRequestListItemDto>> ListAsync(ApprovalRequestFilter filter, ClaimsPrincipal caller, CancellationToken cancellationToken);
 
     Task<ApprovalRequestDetailDto> GetByIdAsync(long requestId, ClaimsPrincipal caller, CancellationToken cancellationToken);
@@ -91,6 +114,79 @@ internal sealed class ApprovalService : IApprovalService
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(caller);
 
+        /*
+          🔴 TEACHER VERIFICATION DOES NOT COME THROUGH HERE ANY MORE — D6.
+
+          It used to, and that was a hole with nothing in front of it. Teacher
+          verification requires every document m_mdm_document_types marks
+          mandatory, and that rule CANNOT live in USP_SubmitApprovalRequest:
+          the teacher's documents are in jp_app.t_app_teacher_documents and
+          jp_mdm must not read jp_app (measured — zero occurrences, and keeping
+          it at zero is the point). So the rule lives in
+          TeacherVerificationService, behind POST /api/teacher/verification.
+
+          Leaving this path open would mean the rule could be skipped with one
+          curl: same teacher token, type 2, no documents, accepted. A rule with
+          a second door is not a rule.
+
+          ⚠️ WHO WAS ACTUALLY USING THIS DOOR: no screen. Measured 15 Nov 2026,
+          calls to `approvals/submit` across all three authenticated apps came
+          to ZERO — school registration goes through the draft path. The only
+          caller was scripts/verify/teacher-verification.mjs, which assembled a
+          body no part of the product could, and so passed for years without
+          anyone noticing the teacher had no button. It now goes through the
+          real endpoint, which is what its own header always claimed.
+
+          ⚠️ IT NAMES THE ENDPOINT THAT DOES WORK. A bare "not allowed" would
+          send whoever hits this reading source to find out where it went.
+        */
+        if (request.RequestTypeId == RequestTypeTeacherVerification)
+        {
+            throw new BusinessRuleException(
+                "Teacher verification is requested from the teacher's own profile. " +
+                "Use POST /api/teacher/verification, which checks the required documents first.",
+                ErrorCodes.ValidationFailed);
+        }
+
+        return await SubmitCoreAsync(request, caller, ipAddress, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /*
+      The ONLY way past the type-2 refusal above, and it exists because the rule
+      that refusal protects is enforced one layer out, in
+      TeacherVerificationService, where the teacher's documents are readable.
+
+      ⚠️ `fullName` IS NOT OPTIONAL. USP_SubmitApprovalRequest refuses a type-2
+      request without it; the caller reads it off the teacher row it has already
+      loaded, so it is never a lookup done here.
+    */
+    public async Task<SubmitApprovalResponse> SubmitTeacherVerificationAsync(
+        Guid teacherUid,
+        string fullName,
+        ClaimsPrincipal caller,
+        string? ipAddress,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        var request = new SubmitApprovalRequest
+        {
+            RequestTypeId = RequestTypeTeacherVerification,
+            EntityUid = teacherUid,
+            FullName = fullName,
+        };
+
+        return await SubmitCoreAsync(request, caller, ipAddress, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<SubmitApprovalResponse> SubmitCoreAsync(
+        SubmitApprovalRequest request,
+        ClaimsPrincipal caller,
+        string? ipAddress,
+        CancellationToken cancellationToken)
+    {
         // 🔴 Both from the token. Never from the payload.
         var requestorUserId = caller.GetUserId();
         var organizationUid = caller.GetOrganizationUid();

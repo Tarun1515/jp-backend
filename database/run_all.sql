@@ -355,6 +355,7 @@ PRINT '  Functions and procedures ...';
 GO
 :r $(DbRoot)\jp_mdm\04_procedures\000_USP_LogError.sql
 :r $(DbRoot)\jp_mdm\04_procedures\000_fn_datetime_ist.sql
+:r $(DbRoot)\jp_mdm\04_procedures\000_fn_mandatory_documents.sql
 :r $(DbRoot)\jp_mdm\04_procedures\001_approval_submit.sql
 :r $(DbRoot)\jp_mdm\04_procedures\002_approval_action.sql
 :r $(DbRoot)\jp_mdm\04_procedures\003_approval_reads.sql
@@ -663,6 +664,11 @@ GO
 --    EVERY procedure — "nothing but the two acting procedures may write the
 --    pin-review log" — is in 999, below.
 :r $(DbRoot)\jp_app\04_procedures\028_branch_pin_review.sql
+
+-- D6. The teacher's way of ASKING to be verified. Reads
+-- jp_mdm.dbo.fn_MandatoryDocumentTypes, so it must follow jp_mdm's functions —
+-- which it does: the whole jp_mdm section is above.
+:r $(DbRoot)\jp_app\04_procedures\029_teacher_verification_request.sql
 
 -- Phase 8A. LAST, deliberately: guards whose subject is EVERY procedure,
 -- which can only be judged once every procedure exists. See the file header

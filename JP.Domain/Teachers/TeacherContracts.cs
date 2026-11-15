@@ -260,3 +260,38 @@ public sealed record SaveExperienceRequest
     public DateOnly? ToDate { get; init; }
     public bool IsCurrent { get; init; }
 }
+
+/// <summary>
+/// Whether this teacher can ask to be verified, and what to say when they
+/// cannot.
+/// </summary>
+/// <remarks>
+/// <para>
+/// 🔒 NO IDENTITY NUMBER CROSSES THIS BOUNDARY (2.50). MissingDocument is a
+/// document type's NAME, read from m_mdm_document_types. There is deliberately
+/// no field here — and no column under it — that could carry an Aadhaar or PAN
+/// number. The document is the record; an admin's eyes verify it.
+/// </para>
+/// <para>
+/// ⚠️ CanRequest IS COMPUTED ON THE SERVER, not inferred in the browser from the
+/// other three. The screen should not have to re-derive a rule, and the server's
+/// answer is the one the endpoint will actually enforce.
+/// </para>
+/// </remarks>
+public sealed record TeacherVerificationReadinessDto
+{
+    /// <summary>Already carries the badge — asking again is refused.</summary>
+    public bool IsVerified { get; init; }
+
+    /// <summary>Verification documents on the profile, of any type.</summary>
+    public int DocumentCount { get; init; }
+
+    /// <summary>
+    /// The first mandatory document with nothing uploaded against it, in the
+    /// order the teacher sees them. Null when the profile is complete.
+    /// </summary>
+    public string? MissingDocument { get; init; }
+
+    /// <summary>Not verified yet, and nothing mandatory is missing.</summary>
+    public bool CanRequest { get; init; }
+}
