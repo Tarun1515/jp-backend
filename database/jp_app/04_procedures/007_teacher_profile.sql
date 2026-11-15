@@ -88,6 +88,26 @@ BEGIN
         t.ExpectedSalaryMin, t.ExpectedSalaryMax,
         t.CurrentCityId, t.CurrentStateId,
         t.CurrentDistrictId, t.CurrentTehsilId, t.CurrentAreaOrVillage,
+
+        /*
+          D1. THE MAP PIN — 041_alter_teacher_geopoint.sql.
+
+          🔒 RETURNED HERE AND NOWHERE ELSE. This procedure is the teacher's own
+          form, read through their own UserUid, so the pin is going back to the
+          person who placed it. USP_GetTeacherPublicProfile — what a SCHOOL sees
+          — does NOT return these and must never be "made consistent" with this
+          read: a home coordinate to ±11 cm is somebody's front door, and 039
+          already refused the teacher AddressLine1/2 and Pincode on exactly that
+          ground. What leaves the building is a DISTANCE IN METRES from
+          USP_BrowseJobs, which cannot be inverted into a place.
+
+          ⚠️ GeoPoint ITSELF IS NOT PROJECTED. It is a CLR type that no DTO in
+          this product can hold, and the two decimals are what the map picker
+          reads and writes. The computed column exists to be measured against,
+          not to travel.
+        */
+        t.Latitude, t.Longitude,
+
         t.AboutMe, t.ResumePath,
         t.IsVerified, t.VerifiedOn, t.IsSuspended,
         t.ProfileCompletionPercent,
@@ -335,6 +355,38 @@ CREATE OR ALTER PROCEDURE dbo.USP_UpdateTeacherProfile
     @CurrentTehsilId            int            = NULL,
     @CurrentAreaOrVillage       nvarchar(200)  = NULL,
 
+    /*
+      ----------------------------------------------------------------------------
+      D1. THE TEACHER'S MAP PIN — 041_alter_teacher_geopoint.sql.
+      ----------------------------------------------------------------------------
+      One optional point, roughly where they live. It is the LEFT operand of the
+      STDistance that orders their job list nearest-first, and it is the only
+      thing that makes that ordering possible: with no pin, USP_BrowseJobs
+      returns the list in exactly the date order it returned before D1 existed.
+
+      ⚠️ decimal(9,6) TO MATCH THE COLUMNS, not float. Binding float here would
+      hand SQL Server a conversion on every save and, worse, make the value that
+      round-trips differ in the last bits from the value that was sent — which
+      the map picker reads as "the host moved my pin" and re-emits. Same shape
+      as USP_SaveBranch's @Latitude/@Longitude, for the same reasons.
+
+      🔴 NOT COALESCED WITH WHAT IS STORED, UNLIKE THE CAMPUS ANCHOR. 006's
+      @GeocodedLatitude keeps the stored value when the caller sends NULL,
+      because a campus edit must not un-geocode an address. This is the
+      opposite: the teacher's form SENDS THE WHOLE ROW on every save (the
+      RowVersion contract), so NULL here means "they cleared their pin" and has
+      to be written. Coalescing would make the pin unremovable — and "remove my
+      home coordinates" is a request this product must be able to honour.
+
+      ⚠️ WHICH MAKES THE CLIENT RESPONSIBLE for sending the pin back on every
+      save of this row. UpdateTeacherProfileBody carries it, the profile screen
+      seeds the draft from the GET, and nearby-jobs.mjs asserts the round trip —
+      because a section save that dropped the field would silently delete
+      somebody's pin while saying "Saved".
+    */
+    @Latitude                   decimal(9, 6)  = NULL,
+    @Longitude                  decimal(9, 6)  = NULL,
+
     @AboutMe                    nvarchar(max)  = NULL
 AS
 BEGIN
@@ -371,6 +423,62 @@ BEGIN
     ELSE IF @DOB IS NOT NULL AND @DOB > DATEADD(YEAR, -18, CAST(@Now AS date))
         SELECT @Code = 'VALIDATION_FAILED',
                @Message = N'That date of birth does not look right.';
+
+    /*
+      ----------------------------------------------------------------------------
+      D1. 🔴 HALF A PIN IS NOT A PLACE, AND THE REFUSAL NAMES WHICH HALF (2.21).
+      ----------------------------------------------------------------------------
+      The two columns are independent, so a latitude with no longitude would
+      store happily — and 041's computed column would then read it as NO PIN,
+      because its CASE NULLs the geography whenever either coordinate is
+      missing. 🔴 That is the dangerous outcome: the teacher's screen would show
+      a latitude they entered, the job list would behave as though they had
+      pinned nothing, and the two facts would never be reconciled on any screen.
+
+      So it is refused here, up front, rather than absorbed. The CASE in 041
+      remains the second line of defence for any writer that bypasses this
+      procedure; this is the line that can explain itself to a person.
+
+      ⚠️ BOTH NULL IS VALID AND IS THE DEFAULT STATE. A teacher who never opened
+      the map, and a teacher who deliberately cleared their pin, both arrive
+      here with two NULLs — and both are saved. Requiring the pair in only one
+      direction would make the pin unremovable.
+    */
+    /*
+      ⚠️ THE XOR IS SPELLED WITH TWO CASEs, not `(@a IS NULL) <> (@b IS NULL)`.
+      T-SQL has no boolean VALUE — a predicate is only legal where a predicate
+      is expected — so the obvious spelling is a syntax error rather than a
+      subtle bug. Recorded because it is the second thing anybody tidying this
+      up will try.
+    */
+    ELSE IF (CASE WHEN @Latitude  IS NULL THEN 1 ELSE 0 END)
+         <> (CASE WHEN @Longitude IS NULL THEN 1 ELSE 0 END)
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = CASE WHEN @Latitude IS NULL
+                               THEN N'A map pin needs both numbers. The latitude is missing — add it, or clear the longitude to remove the pin.'
+                               ELSE N'A map pin needs both numbers. The longitude is missing — add it, or clear the latitude to remove the pin.'
+                          END;
+
+    /*
+      ⚠️ THE RANGE CHECK NAMES THE SWAP, because that is what has almost always
+      happened. In India a longitude is 68–97 and a latitude is 8–37, so a
+      longitude typed into the latitude box is the mistake this catches most —
+      and it is the one mistake that produces a VALID-looking point. 29.15 and
+      75.72 are both legal latitudes; reversed, the teacher lands in the Kara
+      Sea and their job list is silently ranked by how far north each school is
+      (041's guard 1 argues this at length).
+
+      ⚠️ decimal(9,6) ALREADY BOUNDS THE MAGNITUDE at ±999.999999, so this is
+      not about overflow — it is about the band in between, which the type
+      cannot express and a person can type.
+    */
+    ELSE IF @Latitude IS NOT NULL AND (@Latitude < -90 OR @Latitude > 90)
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'A latitude is between -90 and 90. Check the two numbers have not been swapped — in India a latitude is roughly 8 to 37 and a longitude 68 to 97.';
+    ELSE IF @Longitude IS NOT NULL AND (@Longitude < -180 OR @Longitude > 180)
+        SELECT @Code = 'VALIDATION_FAILED',
+               @Message = N'A longitude is between -180 and 180. Check the two numbers have not been swapped — in India a latitude is roughly 8 to 37 and a longitude 68 to 97.';
+
     ELSE IF @CurrentRowVersion <> @RowVersion
         SELECT @Code = 'CONCURRENCY_CONFLICT',
                @Message = N'Your profile was changed somewhere else while you were editing it. Reload and try again.';
@@ -394,6 +502,16 @@ BEGIN
                    CurrentDistrictId        = @CurrentDistrictId,
                    CurrentTehsilId          = @CurrentTehsilId,
                    CurrentAreaOrVillage     = @CurrentAreaOrVillage,
+
+                   /*
+                     D1. 🔴 WRITTEN PLAINLY, NOT COALESCED. NULL clears the pin
+                     — see the parameter comment. GeoPoint is not in this list
+                     and must never be: it is a computed column (041) and SQL
+                     Server maintains it from these two.
+                   */
+                   Latitude                 = @Latitude,
+                   Longitude                = @Longitude,
+
                    AboutMe                  = @AboutMe,
                    RowVersion               = RowVersion + 1,
                    ModifiedOn               = @Now

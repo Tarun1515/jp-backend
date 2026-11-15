@@ -281,6 +281,25 @@ internal sealed class TeacherRepository : BaseRepository, ITeacherRepository
         p.Add("@CurrentDistrictId", request.CurrentDistrictId, DbType.Int32);
         p.Add("@CurrentTehsilId", request.CurrentTehsilId, DbType.Int32);
         p.Add("@CurrentAreaOrVillage", request.CurrentAreaOrVillage, DbType.String, size: 200);
+
+        /*
+          D1. The map pin (041).
+
+          ⚠️ DbType.Decimal, NOT Double. The columns are decimal(9,6) and the
+          procedure's parameters are too. Binding double would hand SQL Server a
+          conversion on every save and — the part that actually bites — would
+          make the value that comes back out differ in its last bits from the
+          one that went in. <ui-map-picker> compares the host's pin against its
+          own with a tolerance precisely because of roundings like that; sending
+          a type that guarantees one is doing the control's defensive work for
+          no reason.
+
+          🔴 A NULL IS SENT AS A NULL AND CLEARS THE PIN. Not coalesced here and
+          not coalesced in the procedure — see the contract's remarks.
+        */
+        p.Add("@Latitude", request.Latitude, DbType.Decimal);
+        p.Add("@Longitude", request.Longitude, DbType.Decimal);
+
         p.Add("@AboutMe", request.AboutMe, DbType.String, size: -1);
 
         return QuerySingleAsync<ProcResult>("USP_UpdateTeacherProfile", p, cancellationToken);

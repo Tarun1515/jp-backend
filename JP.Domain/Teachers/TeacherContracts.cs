@@ -49,6 +49,41 @@ public sealed record TeacherProfileDto
     public int? CurrentTehsilId { get; init; }
     public string? CurrentAreaOrVillage { get; init; }
 
+    /// <summary>
+    /// D1. The teacher's own map pin — where "nearby jobs first" measures from.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔒 ON THIS TYPE AND ON NO OTHER. This is what the teacher sees of their
+    /// OWN profile, read through their own token. <see cref="TeacherBrowseDto"/>
+    /// — what a SCHOOL sees — has no coordinate properties and must never grow
+    /// any: a home address to ±11 cm is somebody's front door, and 039 already
+    /// refused the teacher AddressLine1/2 and Pincode on exactly that ground
+    /// while a school's address is published on every advert. The only thing
+    /// that leaves the building is
+    /// <see cref="JP.Domain.Applications.JobBrowseItemDto.DistanceMetres"/>,
+    /// a scalar from an origin the reader cannot see.
+    /// </para>
+    /// <para>
+    /// ⚠️ BOTH OR NEITHER. Half a pin is a point on the Greenwich meridian —
+    /// in the Atlantic, for anything in India — so
+    /// <c>USP_UpdateTeacherProfile</c> refuses one without the other and names
+    /// which half is missing. The computed column (041) independently reads a
+    /// half pin as no pin, so storage cannot be left inconsistent either way.
+    /// </para>
+    /// <para>
+    /// ⚠️ NULL MEANS NOBODY ASKED, AND THERE IS NO FALLBACK. The job browse
+    /// does not guess from <see cref="CurrentCityId"/>'s centroid: with no pin
+    /// the list comes back in date order, unchanged, and the screen offers the
+    /// map instead. 041's header argues why a guessed distance is worse than
+    /// none.
+    /// </para>
+    /// </remarks>
+    public decimal? Latitude { get; init; }
+
+    /// <inheritdoc cref="Latitude"/>
+    public decimal? Longitude { get; init; }
+
     public string? AboutMe { get; init; }
     public string? ResumePath { get; init; }
 
@@ -273,6 +308,36 @@ public sealed record UpdateTeacherProfileRequest
     public int? CurrentDistrictId { get; init; }
     public int? CurrentTehsilId { get; init; }
     public string? CurrentAreaOrVillage { get; init; }
+
+    /// <summary>D1. The map pin. Optional, like everything else here.</summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 THE PROCEDURE WRITES THIS PLAINLY — IT DOES NOT COALESCE. Sending
+    /// null CLEARS the pin, because "remove my home coordinates" has to be a
+    /// request this product can honour. <c>USP_SaveBranch</c>'s geocoded anchor
+    /// does the opposite (null keeps what is stored) and the difference is
+    /// deliberate: a campus edit must not un-geocode an address, while this
+    /// form sends the whole profile row on every save.
+    /// </para>
+    /// <para>
+    /// ⚠️ WHICH MAKES THE CLIENT RESPONSIBLE FOR ROUND-TRIPPING IT. The teacher
+    /// profile screen has nine section Save buttons over ONE row, and each one
+    /// PUTs the whole draft. A section that forgot this field would silently
+    /// delete somebody's pin while showing "Saved" — the exact failure the
+    /// tehsil picker had in reverse. <c>nearby-jobs.mjs</c> asserts the round
+    /// trip.
+    /// </para>
+    /// <para>
+    /// ⚠️ BOTH OR NEITHER, AND THE RANGES ARE CHECKED. The procedure refuses
+    /// one coordinate without the other, and a latitude outside −90..90 or a
+    /// longitude outside −180..180 — the refusal names the likely cause, which
+    /// is the two boxes being swapped.
+    /// </para>
+    /// </remarks>
+    public decimal? Latitude { get; init; }
+
+    /// <inheritdoc cref="Latitude"/>
+    public decimal? Longitude { get; init; }
 
     public string? AboutMe { get; init; }
 }

@@ -22,6 +22,32 @@ GO
 
 SET NOCOUNT ON;
 SET XACT_ABORT OFF;
+
+/*
+  🔴 ADDED FOR D1, AND IT IS NOT DECORATION.
+  041_alter_teacher_geopoint.sql put a SPATIAL INDEX on a PERSISTED computed
+  column of t_app_teachers, which subjects EVERY later INSERT, UPDATE and DELETE
+  on that table to the indexed-view SET requirements. This file writes the table
+  DIRECTLY (section 5's ResumePath update) rather than only through procedures —
+  and a procedure is safe either way, because QUOTED_IDENTIFIER and ANSI_NULLS
+  are captured at CREATE time and travel with the module, while an ad-hoc batch
+  takes them from the session.
+
+  ⚠️ sqlcmd DEFAULTS QUOTED_IDENTIFIER **OFF** unless -I is passed, so without
+  these two lines this file fails with Msg 1934 when run by hand the way
+  README.md used to allow. run.mjs and README both pass -I today; run_all.sql
+  states the same rule — "repeated at the top of every individual script so they
+  also work when run standalone" — and this file was the one jp_app test that
+  did not follow it.
+
+  ⚠️ THE OTHER FIVE (ANSI_PADDING, ANSI_WARNINGS, ARITHABORT,
+  CONCAT_NULL_YIELDS_NULL, NUMERIC_ROUNDABORT) ARE NOT SET HERE because they
+  cannot be got wrong from sqlcmd: ODBC turns ANSI_DEFAULTS on, which covers
+  three of them and supplies ARITHABORT's behaviour, and NUMERIC_ROUNDABORT
+  defaults OFF. QUOTED_IDENTIFIER is the only one sqlcmd actively turns off.
+*/
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
 GO
 
 DECLARE @t TABLE (n int IDENTITY(1,1), section varchar(24), what nvarchar(94), got nvarchar(60), pass varchar(4));

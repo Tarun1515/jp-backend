@@ -530,6 +530,34 @@ GO
 -- rebuilds them with TehsilId.
 :r $(DbRoot)\jp_app\01_tables\040_alter_preferred_location_tvp.sql
 
+-- D1. The TEACHER's own map pin, and the PERSISTED geography column over it —
+-- the other end of the line 037 drew from the campus side, so "nearby jobs
+-- first" becomes an STDistance between two columns rather than a guess.
+--
+-- 🔴 AFTER 036, AND THE ORDER IS LOAD-BEARING FOR THE SAME REASON 037's IS:
+--    036 carries the guard that EVERY Latitude/Longitude in jp_app is
+--    decimal(9,6), and these two columns are named Latitude/Longitude
+--    deliberately so that sweep covers them (038's header records what
+--    escaping it cost GeocodedLatitude). ⚠️ 036 runs EARLIER, so on a
+--    from-scratch build it judges these columns on the NEXT pass — which is
+--    why 041 repeats the check narrowly for its own two, at the point where
+--    the computed column's CAST was written against them.
+--
+-- 🔴 AFTER 037, because 041's guard 3 asserts that BOTH GeoPoint columns name
+--    SRID 4326 AT THE SAME TIME. The distance is an STDistance between them
+--    and mismatched SRIDs return NULL rather than raising, so the invariant
+--    belongs to the pair; the guard cannot check a column that is not there
+--    yet.
+--
+-- ⚠️ IT IS A TABLE FILE AND jp_app HAS NO 02_indexes FOLDER — the spatial
+--    index lives beside the column it indexes (006, 003, 034, 037 all do
+--    this). Splitting them would put a CREATE SPATIAL INDEX somewhere that
+--    could run before the PERSISTED column it requires exists.
+--
+-- ⚠️ BEFORE any procedure: 04_procedures\007 reads and writes the pin, and
+--    04_procedures\017 (USP_BrowseJobs) reads the computed column.
+:r $(DbRoot)\jp_app\01_tables\041_alter_teacher_geopoint.sql
+
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
 -- shapes the schema. It is listed here so a database rebuilt from scratch ends

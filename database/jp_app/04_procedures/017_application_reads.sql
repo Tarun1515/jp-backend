@@ -634,9 +634,19 @@ GO
   given we are only looking at this one". That is also why the normalisation and
   the validation live HERE rather than in the shared block below.
 
-  ⚠️ THE ORDERING IS THE SAME IN EVERY MODE WITH ONE ADDITION: in PREFERRED,
-  jobs are ordered by the teacher's own PreferenceOrder first, so their
-  first-choice place leads the tab named after it. Argued at the ORDER BY.
+  ⚠️ THE ORDERING IS NEWEST-FIRST IN EVERY MODE, WITH TWO ADDITIONS. Both are
+  argued at the ORDER BY; both are no-ops in the modes they do not belong to.
+
+      PREFERRED   jobs lead on the teacher's own PreferenceOrder, so their
+                  first-choice place leads the tab named after it.
+
+      D1          in MATCHES and MIGHT_LIKE, and ONLY IF THE TEACHER HAS PINNED
+                  THEMSELVES on a map (041), jobs lead on how far their campus
+                  is from that pin — nearest first, campuses with no pin after
+                  every campus that has one, then by date. 🔴 With no teacher
+                  pin the order is the date order this procedure returned before
+                  D1 existed, unchanged rather than approximated, and there is
+                  NO city-centroid fallback that would make it otherwise.
 
   ---------------------------------------------------------------------------
   🔴 THE EMPTY-SET IDIOM IS USED IN THE CONJUNCTION AND REFUSED IN THE
@@ -1290,6 +1300,119 @@ BEGIN
         DELETE FROM @Candidates WHERE SetsOk = 0;
 
     /*
+      =========================================================================
+      D1. THE TEACHER'S OWN MAP PIN, FOR "NEARBY FIRST".
+      =========================================================================
+      041_alter_teacher_geopoint.sql added t_app_teachers.Latitude/Longitude and
+      the PERSISTED geography column over them. This is the LEFT operand of the
+      distance that orders MATCHES and MIGHT_LIKE, and the ONLY thing that turns
+      the ordering on. NULL here and nothing below changes: no distance column,
+      no reordering, the same date order this procedure has always returned.
+
+      ---------------------------------------------------------------------------
+      🔴 WHY THIS IS *OUTSIDE* THE SHARED CANDIDATE CLASSIFICATION BLOCK
+      ---------------------------------------------------------------------------
+      It would have been easy to put `@AnchorPoint = t.GeoPoint` into the
+      resolve that already reads this row for @TeacherId and @ProfileStateId,
+      twenty lines up — and there is a precedent for carrying something the
+      counts reader cannot use (SetsOk is in @Candidates for exactly that
+      reason, so the two blocks stay byte-identical). It is deliberately NOT
+      done, on two grounds:
+
+        1. DISTANCE IS NOT CLASSIFICATION. The block between the SHARED markers
+           decides WHICH jobs are candidates and which tab each belongs to.
+           Distance changes NEITHER — it reorders a set whose membership is
+           already fixed. USP_BrowseJobCounts counts tab membership, so a
+           distance would be dead weight there in a way SetsOk is not: SetsOk is
+           computed BY the classification query and cannot be lifted out of it,
+           while this is one scalar read that belongs to paging.
+
+        2. 🔴 THE CHEAPEST POSSIBLE DIFF AGAINST A BYTE-FOR-BYTE BUILD GUARD.
+           The guard at the foot of this file compares both blocks out of
+           sys.sql_modules and fails the build over a renamed alias. Every edit
+           inside the markers is an edit that must be made twice, identically,
+           or the build stops — and the cost of getting that wrong is the one
+           bug this whole file shape exists to prevent (a tab label disagreeing
+           with the rows under it). D1 needs nothing in there, so it touches
+           nothing in there.
+
+      ⚠️ @TeacherId IS STILL VISIBLE HERE. T-SQL DECLARE is procedure-scoped,
+      not block-scoped, so the local the shared block resolved from the token is
+      in scope below it. That is what lets this read happen outside the markers
+      without re-deriving the teacher — and it means this read inherits the
+      shared block's identity rule: @TeacherId came from @UserUid, there is no
+      teacher-id parameter on this procedure, so "rank by somebody else's home"
+      is not expressible.
+
+      ⚠️ A SECOND SEEK ON t_app_teachers, AND IT IS A PRIMARY-KEY SEEK. The
+      honest cost, named: one extra clustered-index seek per browse call,
+      returning one PERSISTED geography. The alternative (widening the shared
+      resolve) buys that seek back and spends it twice over in the counts
+      procedure, which cannot use the value.
+
+      🔴 READ FROM THE COMPUTED COLUMN, NOT RE-DERIVED FROM THE TWO DECIMALS.
+      `geography::Point(CAST(t.Latitude AS float), ...)` here would be a SECOND
+      PLACE where the argument order could be got wrong — and 041's guard only
+      watches the column definition. One expression in the schema, read as a
+      value everywhere else.
+
+      ⚠️ NO LIVENESS TEST ON THIS READ, deliberately: the shared block already
+      refused to resolve @TeacherId at all for a deleted, inactive or suspended
+      teacher, so a row that reaches here is one that passed those gates. A
+      repeat would be a second copy of a rule that can drift.
+    */
+    DECLARE @AnchorPoint geography = NULL;
+
+    IF @TeacherId IS NOT NULL
+        SELECT @AnchorPoint = t.GeoPoint
+        FROM dbo.t_app_teachers t
+        WHERE t.TeacherId = @TeacherId;
+
+    /*
+      🔴 WHETHER THE DISTANCE ORDERING APPLIES AT ALL — DECIDED ONCE, HERE.
+
+      Two conditions, and both have to hold:
+
+        · THE TEACHER HAS A PIN. With none there is no origin and nothing to
+          measure from. 🔒 AND THERE IS NO FALLBACK: m_mdm_city and m_mdm_tehsil
+          both carry a centroid, and filling a missing pin from the centre of
+          the teacher's saved town would make this feature work for everybody —
+          it is refused. A town centroid is not where anybody lives, and
+          "~4 km away" computed from one is a sentence the product states as
+          fact and cannot support. 041's header argues it in full. If either pin
+          is missing there is NO distance and NO label.
+
+        · THE TAB IS MATCHES OR MIGHT_LIKE. Those are the two
+          recommendation tabs — "what suits me" — and distance is part of
+          whether a job suits somebody. The other two are left exactly as they
+          were, on purpose:
+
+            PREFERRED  is already ordered by the teacher's OWN ranking
+                       (PreferenceOrder, 1 = first choice). That tab is named
+                       after an order a person chose by hand; overriding it with
+                       kilometres would answer a question nobody asked on it.
+            unmoded    is the plain browse and the oldest contract this
+                       procedure has. Nothing about typing a keyword or paging
+                       the open market asks for a distance sort.
+
+      ⚠️ AN ACTIVE KEYWORD DOES NOT TURN THIS OFF, and the reason is the one
+      the PreferenceRank note above gives for itself. A keyword sets all three
+      tab bits so the mode DELETE removes nothing — but @EffMode is still
+      whatever the caller sent, and a distance is a fact about a job rather than
+      a claim about a tab. So searching inside the Matches tab returns the hits
+      nearest first, which is the right answer for somebody who has told us
+      where they are. 🔴 What a keyword must never do is invent a distance: with
+      no pin @RankByDistance is 0 whatever the mode, and the search comes back
+      in date order exactly as it always has.
+
+      ⚠️ A bit, computed once, rather than the same two-part condition repeated
+      in three ORDER BY terms where one copy could be edited alone.
+    */
+    DECLARE @RankByDistance bit =
+        CASE WHEN @AnchorPoint IS NOT NULL AND @EffMode IN ('MATCHES', 'MIGHT_LIKE')
+             THEN 1 ELSE 0 END;
+
+    /*
       The page. The joins here are PROJECTION ONLY — every liveness and
       eligibility rule was already applied when @Candidates was built, and
       both joins are on primary keys so neither can change the row count. 🔴 Do
@@ -1339,6 +1462,51 @@ BEGIN
                 WHERE sj.JobId = j.JobId AND sj.TeacherId = @TeacherId AND sj.Is_Deleted = 0)
              THEN CAST(1 AS tinyint) ELSE CAST(0 AS tinyint) END        AS IsSaved,
 
+        /*
+          ----------------------------------------------------------------------
+          D1. HOW FAR THIS JOB'S CAMPUS IS FROM THE TEACHER'S PIN — THE NUMBER
+          BEHIND "~4 km away".
+          ----------------------------------------------------------------------
+          🔒 METRES, NEVER THE POINT. A distance from an origin the caller
+          cannot see is not invertible into a home address; one latitude and one
+          longitude is somebody's front door. The campus pin is public (it is on
+          every job advert) and the teacher's is not, so the asymmetry is kept by
+          sending only the scalar. 041's header has the privacy rule in full.
+
+          🔴 NULL WHENEVER EITHER PIN IS MISSING, AND THAT IS THE WHOLE
+          CONTRACT OF THE LABEL. No teacher pin -> @AnchorPoint is NULL ->
+          STDistance returns NULL for every row. No campus pin -> b.GeoPoint is
+          NULL -> invoking an instance method on a NULL geography returns NULL
+          (it does not raise). Either way the client gets null and renders no
+          label at all. 🔒 THERE IS NO CITY-CENTROID FALLBACK ANYWHERE IN THIS
+          EXPRESSION, by decision: see the @RankByDistance comment above.
+
+          ⚠️ PROJECTED ON EVERY MODE, NOT ONLY THE TWO THAT REORDER. The label
+          is about one card; the ordering is about a tab. A teacher with a pin
+          looking at the PREFERRED tab or a keyword search should still be told
+          how far away a job is — hiding a known distance because the sort is
+          different would be withholding a fact we have.
+
+          ⚠️ ROUNDED TO WHOLE METRES FOR THE WIRE, WHILE THE ORDER BY USES THE
+          RAW VALUE. Two different numbers on purpose: 11 significant digits of
+          float is noise in JSON, and rounding the SORT key would collapse
+          sub-metre differences into ties that then fall through to the date
+          tiebreak — so two campuses 40 cm apart could swap places between
+          pages. Same split 028 makes ("Rounding is for the screen; NeedsReview
+          used what STDistance said").
+
+          ⚠️ int, AND THE BOUND WAS CHECKED RATHER THAN ASSUMED. STDistance on a
+          geography returns METRES (028's header: "the ×1000 happens once,
+          inside the comparison, at the only place that knows STDistance's
+          unit"), and the largest value it can ever produce is half the
+          planet's circumference — about 20,038,000 m. int tops out at
+          2,147,483,647, so it cannot overflow even for a teacher measuring
+          against a campus on the other side of the world. The spelling matches
+          AdminDeskContracts.DistanceMetres (028's log), which is also int
+          metres — one fact, one name, one unit.
+        */
+        CAST(ROUND(b.GeoPoint.STDistance(@AnchorPoint), 0) AS int)      AS DistanceMetres,
+
         j.Is_Active AS IsActive          -- 🔴 2.61
     FROM @Candidates c
         INNER JOIN dbo.t_app_jobs j              ON j.JobId    = c.JobId
@@ -1363,9 +1531,84 @@ BEGIN
       somewhere the teacher named; under an active keyword every row is eligible
       for every tab, so unranked rows DO appear here and must sort LAST rather
       than leading the list they have no claim on.
+
+      ==========================================================================
+      D1. AND NOW TWO MORE TERMS: NEARBY JOBS RANK ON TOP.
+      ==========================================================================
+      🔴 BOTH ARE INERT UNLESS @RankByDistance = 1, AND THAT IS THE LOAD-BEARING
+      PROPERTY OF THIS WHOLE CHANGE.
+
+      The requirement was not "a similar order" when a teacher has no pin — it
+      was EXACTLY THE ORDER THIS PROCEDURE RETURNED BEFORE D1 EXISTED. The
+      mechanism is the same one the PREFERRED term above already uses: a CASE
+      whose ELSE is an implicit constant NULL. A sort key that is the SAME value
+      on every row cannot reorder anything, so with no pin — or on the PREFERRED
+      tab, or an unmoded browse — these two terms collapse and the surviving
+      keys are `PreferenceRank, PublishedOn DESC, JobId DESC`: the original
+      ORDER BY, character for character in its effect.
+
+      ⚠️ THAT IS WHY THEY ARE TWO CASE EXPRESSIONS AND NOT AN `IF` AROUND TWO
+      PAGING QUERIES. A second SELECT for the pinned case would be a second
+      place the projection, the paging and the three joins could drift — and
+      this file's whole shape exists to stop exactly that kind of duplication
+      (see the counts procedure's header).
+
+      --------------------------------------------------------------------------
+      TERM 1 — PINNED CAMPUSES BEFORE PINLESS ONES. 🔴 NOT A SIDE EFFECT OF NULL
+      SORTING, A STATED RULE.
+      --------------------------------------------------------------------------
+      A job whose campus has no pin has NO distance. It is not "distance
+      unknown, treat as zero" and it is not "distance unknown, treat as
+      infinite" — it is a fact we do not have, and the product's answer is:
+      every job we CAN measure comes first, then the rest in date order.
+
+      🔴 THE BARE DISTANCE TERM WOULD GET THIS BACKWARDS. NULLs sort FIRST in
+      ASC on SQL Server, so `STDistance(...) ASC` alone would put every pinless
+      campus AT THE TOP of a tab that promises nearest-first — the jobs we know
+      least about leading the list, which is the exact opposite of the feature.
+      This term is what prevents it, and it is why there are two terms rather
+      than one with an ISNULL(..., big-number) trick: a sentinel distance is a
+      number that would also have to be kept out of the projection, and a
+      0/1 flag says what is meant.
+
+      --------------------------------------------------------------------------
+      TERM 2 — NEAREST FIRST, ON THE RAW STDistance.
+      --------------------------------------------------------------------------
+      ⚠️ THE SORT KEY IS THE UNROUNDED VALUE while the card shows whole metres
+      (see the projection). Sorting on the rounded number would turn sub-metre
+      differences into ties, and a tie here falls through to PublishedOn — so
+      two campuses 40 cm apart could swap places between two reads of the same
+      page. Rounding is for the screen.
+
+      ⚠️ WITHIN THE PINLESS GROUP THIS TERM IS UNIFORMLY NULL, so it cannot
+      reorder them, and they fall to `PublishedOn DESC, JobId DESC` — "then by
+      date", which is what the requirement asks for. The two groups are ordered
+      by two different rules and term 1 is what keeps them apart.
+
+      ⚠️ b, NOT c. The distance reads the CAMPUS's GeoPoint off the branch join
+      already in this query. Nothing was added to @Candidates for it, which is
+      what keeps the shared classification block untouched — argued at
+      @AnchorPoint above.
+
+      🔴 A TIE IS STILL BROKEN DETERMINISTICALLY. Two campuses at the same pin
+      (a school with two postings at one address is the common case) produce
+      identical distances, and the list then falls to PublishedOn DESC and
+      JobId DESC exactly as it always did. No row's position is left to "what
+      the join returned".
     */
     ORDER BY CASE WHEN @EffMode = 'PREFERRED'
                   THEN ISNULL(c.PreferenceRank, 2147483647) END ASC,
+
+             -- D1 term 1: measurable before unmeasurable. Constant NULL — and
+             -- therefore no-op — unless the teacher has a pin AND the tab is
+             -- MATCHES or MIGHT_LIKE.
+             CASE WHEN @RankByDistance = 1
+                  THEN CASE WHEN b.GeoPoint IS NULL THEN 1 ELSE 0 END END ASC,
+
+             -- D1 term 2: nearest first, among the measurable.
+             CASE WHEN @RankByDistance = 1
+                  THEN b.GeoPoint.STDistance(@AnchorPoint) END ASC,
+
              c.PublishedOn DESC,
              c.JobId DESC
     OFFSET (@PageNumber - 1) * @PageSize ROWS FETCH NEXT @PageSize ROWS ONLY;
@@ -1991,10 +2234,23 @@ BEGIN
          WHERE j.JobUid = @JobUid
            AND j.Is_Deleted = 0;
 
-    DECLARE @TeacherId bigint = NULL;
+    /*
+      D1. ⚠️ THE PIN IS TAKEN IN THE SAME SELECT, not in a second read.
+
+      USP_BrowseJobs has to resolve its anchor separately because the read that
+      finds its @TeacherId lives inside a block a build guard holds byte-for-byte
+      identical with the counts procedure. This procedure has no such
+      constraint, so the point rides along on the resolve that was already
+      happening — one seek, not two.
+
+      🔒 Still only the teacher's OWN pin: @UserUid is the token's, there is no
+      teacher-id parameter here either, and what leaves is a distance in metres
+      rather than a coordinate. 041's header has the rule.
+    */
+    DECLARE @TeacherId bigint = NULL, @AnchorPoint geography = NULL;
 
     IF @UserUid IS NOT NULL
-        SELECT @TeacherId = t.TeacherId
+        SELECT @TeacherId = t.TeacherId, @AnchorPoint = t.GeoPoint
         FROM dbo.t_app_teachers t
         WHERE t.UserUid = @UserUid AND t.Is_Deleted = 0 AND t.Is_Active = 1 AND t.IsSuspended = 0;
 
@@ -2043,6 +2299,22 @@ BEGIN
                 SELECT 1 FROM dbo.t_app_saved_jobs sj
                 WHERE sj.JobId = j.JobId AND sj.TeacherId = @TeacherId AND sj.Is_Deleted = 0)
              THEN CAST(1 AS tinyint) ELSE CAST(0 AS tinyint) END        AS IsSaved,
+
+        /*
+          D1. 🔴 THE SAME EXPRESSION AS USP_BrowseJobs', AND IT IS HERE SO THAT
+          THE FIELD IS NOT A LIE ON THIS SCREEN.
+
+          `JobForTeacher extends JobBrowseItem` in the teacher client, so the
+          moment the browse card gained `distanceMetres` this read either
+          produced it too or produced a typed property that was permanently
+          undefined on the detail page. This codebase's oldest rule about that
+          (007's: "a field the server ignores is a field somebody will one day
+          expect it to honour") makes the choice: project it.
+
+          ⚠️ NULL whenever either pin is missing, and 🔒 NO CITY-CENTROID
+          FALLBACK — identical contract to the browse, argued there in full.
+        */
+        CAST(ROUND(b.GeoPoint.STDistance(@AnchorPoint), 0) AS int)      AS DistanceMetres,
 
         j.Is_Active AS IsActive          -- 🔴 2.61
     FROM dbo.t_app_jobs j

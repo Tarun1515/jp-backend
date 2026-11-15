@@ -569,6 +569,42 @@ public sealed class JobBrowseItemDto
     public bool HasApplied { get; set; }
     public bool IsSaved { get; set; }
 
+    /// <summary>
+    /// D1. Straight-line metres from the teacher's own map pin to this job's
+    /// campus pin — the number behind "~4 km away". Null when there is no
+    /// distance to state.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 NULL WHENEVER EITHER PIN IS MISSING, AND THE LABEL IS A PURE FUNCTION
+    /// OF THAT. No teacher pin (041) or no campus pin (037) means no distance
+    /// and no label — the card simply does not say it. 🔒 THERE IS NO
+    /// CITY-CENTROID FALLBACK: <c>m_mdm_city</c> and <c>m_mdm_tehsil</c> both
+    /// carry a town centre and the browse deliberately does not reach for it. A
+    /// centroid is not where anybody lives, and once it is a number on a card
+    /// the teacher cannot tell a guess from a measurement.
+    /// </para>
+    /// <para>
+    /// 🔒 METRES, NEVER THE POINT. A distance from an origin the reader cannot
+    /// see is not invertible into a home address; a latitude and a longitude is
+    /// somebody's front door. The campus pin is public — it is on the advert —
+    /// and the teacher's is not, which is why only the scalar crosses the wire.
+    /// </para>
+    /// <para>
+    /// ⚠️ PRESENT ON EVERY TAB, while the nearest-first ORDERING applies only to
+    /// Matches and You-might-like. The label is about one card; the ordering is
+    /// about a tab. Withholding a distance we know because the sort happens to
+    /// be different would be hiding a fact.
+    /// </para>
+    /// <para>
+    /// ⚠️ STRAIGHT-LINE, NOT ROAD DISTANCE — <c>STDistance</c> over WGS 84. The
+    /// client prints it to whole kilometres with a leading "~" for that reason:
+    /// a decimal place would imply a precision the number does not have, since
+    /// the drive could be half again as far.
+    /// </para>
+    /// </remarks>
+    public int? DistanceMetres { get; set; }
+
     /// <summary>🔴 Aliased in the procedure (2.61).</summary>
     public bool IsActive { get; set; }
 }
@@ -617,6 +653,18 @@ public sealed class JobForTeacherDto
 
     public bool HasApplied { get; set; }
     public bool IsSaved { get; set; }
+
+    /// <inheritdoc cref="JobBrowseItemDto.DistanceMetres"/>
+    /// <remarks>
+    /// ⚠️ PROJECTED BY <c>USP_GetJobForTeacher</c> TOO, SO THIS IS NOT A DEAD
+    /// FIELD. The teacher client declares <c>JobForTeacher extends
+    /// JobBrowseItem</c>, so the moment the card gained a distance this read
+    /// either produced one as well or carried a property that was permanently
+    /// undefined on the detail page — "a field the server ignores is a field
+    /// somebody will one day expect it to honour" (007).
+    /// </remarks>
+    public int? DistanceMetres { get; set; }
+
     public bool IsActive { get; set; }
 
     public IReadOnlyList<int> SubjectIds { get; set; } = [];
