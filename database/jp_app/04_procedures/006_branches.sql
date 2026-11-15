@@ -64,6 +64,7 @@ BEGIN
         b.BranchId, b.BranchUid, b.SchoolId,
         b.BranchName, b.BranchCode, b.IsHeadOffice,
         b.AddressLine1, b.AddressLine2, b.CityId, b.DistrictId, b.StateId, b.Pincode,
+        b.TehsilId, b.AreaOrVillage,
         b.Latitude, b.Longitude,
         b.ContactPerson, b.ContactEmail, b.ContactMobile,
         b.Is_Active AS IsActive, b.RowVersion, b.CreatedOn
@@ -106,6 +107,7 @@ BEGIN
         b.BranchId, b.BranchUid, b.SchoolId,
         b.BranchName, b.BranchCode, b.IsHeadOffice,
         b.AddressLine1, b.AddressLine2, b.CityId, b.DistrictId, b.StateId, b.Pincode,
+        b.TehsilId, b.AreaOrVillage,
         b.Latitude, b.Longitude,
         b.ContactPerson, b.ContactEmail, b.ContactMobile,
         b.Is_Active AS IsActive, b.RowVersion
@@ -139,6 +141,21 @@ CREATE OR ALTER PROCEDURE dbo.USP_SaveBranch
     @DistrictId     int            = NULL,
     @StateId        int            = NULL,
     @Pincode        varchar(10)    = NULL,
+
+    /*
+      🔴 ADDED 15 Nov 2026. t_app_school_branches has carried TehsilId and
+      AreaOrVillage since 036 and this procedure had no parameters for them, so
+      the columns were unreachable — measured: no procedure in jp_app wrote
+      either one for a branch.
+
+      ⚠️ The campus form deliberately had no tehsil box because of exactly
+      that, and said so in its own comment: adding one "would mean a school
+      could set its campus tehsil, be told 'Campus updated', and nothing would
+      have" been saved. That was the correct call. This is the other half of it.
+    */
+    @TehsilId       int            = NULL,
+    @AreaOrVillage  nvarchar(200)  = NULL,
+
     @Latitude       decimal(9, 6)  = NULL,
     @Longitude      decimal(9, 6)  = NULL,
 
@@ -219,12 +236,14 @@ BEGIN
                 INSERT INTO dbo.t_app_school_branches
                     (SchoolId, BranchName, BranchCode, IsHeadOffice,
                      AddressLine1, AddressLine2, CityId, DistrictId, StateId, Pincode,
+                     TehsilId, AreaOrVillage,
                      Latitude, Longitude, GeocodedLatitude, GeocodedLongitude, GeocodedOn,
                      ContactPerson, ContactEmail, ContactMobile,
                      Is_Active, CreatedBy)
                 VALUES
                     (@SchoolId, @BranchName, @BranchCode, 0,     -- never the head office
                      @AddressLine1, @AddressLine2, @CityId, @DistrictId, @StateId, @Pincode,
+                     @TehsilId, @AreaOrVillage,
                      @Latitude, @Longitude, @GeocodedLatitude, @GeocodedLongitude,
                      CASE WHEN @GeocodedLatitude IS NOT NULL AND @GeocodedLongitude IS NOT NULL THEN @Now END,
                      @ContactPerson, @ContactEmail, @ContactMobile,
@@ -259,6 +278,8 @@ BEGIN
                        DistrictId    = @DistrictId,
                        StateId       = @StateId,
                        Pincode       = @Pincode,
+                       TehsilId      = @TehsilId,
+                       AreaOrVillage = @AreaOrVillage,
                        Latitude      = @Latitude,
                        Longitude     = @Longitude,
 

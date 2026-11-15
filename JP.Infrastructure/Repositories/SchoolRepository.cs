@@ -211,6 +211,10 @@ internal sealed class SchoolRepository : BaseRepository, ISchoolRepository
         p.Add("@StateId", request.StateId, DbType.Int32);
         p.Add("@Pincode", request.Pincode, DbType.AnsiString, size: 10);
 
+        // The two columns 036 added and no procedure could reach until 15 Nov 2026.
+        p.Add("@TehsilId", request.TehsilId, DbType.Int32);
+        p.Add("@AreaOrVillage", request.AreaOrVillage, DbType.String, size: 200);
+
         return QuerySingleAsync<ProcResult>("USP_UpdateSchoolProfile", p, cancellationToken);
     }
 

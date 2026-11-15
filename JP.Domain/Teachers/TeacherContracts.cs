@@ -29,6 +29,26 @@ public sealed record TeacherProfileDto
     public decimal? ExpectedSalaryMax { get; init; }
     public int? CurrentCityId { get; init; }
     public int? CurrentStateId { get; init; }
+
+    /*
+      Client instruction, 15 Nov 2026: the teacher's address carries the same
+      chain the school's does — State, District, City/Town, Tehsil/Sub-tehsil,
+      Area or village.
+
+      ⚠️ DISTRICT IS STORED NOW. It used to be rebuilt in the browser from the
+      saved city on every re-open, which held only because a city has one
+      district — and stops holding under a tehsil, which sits between them.
+
+      ⚠️ DELIBERATELY NOT ON TeacherBrowseDto. That is what a SCHOOL sees, and
+      its procedure does not read these columns — adding them there would ship
+      three fields that are always null, which is the dead-field problem this
+      pass has been clearing out. A teacher's village is also a home-address
+      detail a school does not need in order to decide whether to invite them.
+    */
+    public int? CurrentDistrictId { get; init; }
+    public int? CurrentTehsilId { get; init; }
+    public string? CurrentAreaOrVillage { get; init; }
+
     public string? AboutMe { get; init; }
     public string? ResumePath { get; init; }
 
@@ -158,6 +178,28 @@ public sealed record TeacherLocationDto
 
     public int StateId { get; init; }
     public int PreferenceOrder { get; init; }
+
+    /// <summary>
+    /// Extra detail under the chosen town.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 ADDED 15 Nov 2026, AND IT IS THE FIELD THAT WAS MISSING WHILE THE
+    /// COLUMN EXISTED. <c>t_app_teacher_preferred_locations.TehsilId</c> has
+    /// been there since 036; the <c>dbo.PreferredLocationList</c> table type
+    /// had no column for it, so the picker on the teacher profile accepted a
+    /// tehsil, the screen said "Saved", and the value was discarded on the way
+    /// to the database.
+    /// </para>
+    /// <para>
+    /// ⚠️ NOT PART OF THE PLACE'S IDENTITY. A town belongs to exactly one
+    /// tehsil, so two rows differing only by tehsil would be nonsense rather
+    /// than two preferences. The procedure matches on (CityId, StateId) with
+    /// NULL-equality and UPDATES this in place, exactly as it does
+    /// PreferenceOrder.
+    /// </para>
+    /// </remarks>
+    public int? TehsilId { get; init; }
 }
 
 public sealed record TeacherExperienceDto
@@ -221,6 +263,17 @@ public sealed record UpdateTeacherProfileRequest
     public decimal? ExpectedSalaryMax { get; init; }
     public int? CurrentCityId { get; init; }
     public int? CurrentStateId { get; init; }
+
+    /*
+      The other three levels of the chain (15 Nov 2026). All optional, like
+      every other field here — a teacher who filled their address in before
+      today sends null, which is the honest value rather than a reason to
+      refuse their save.
+    */
+    public int? CurrentDistrictId { get; init; }
+    public int? CurrentTehsilId { get; init; }
+    public string? CurrentAreaOrVillage { get; init; }
+
     public string? AboutMe { get; init; }
 }
 

@@ -87,6 +87,7 @@ BEGIN
         t.TotalExperienceMonths, t.CurrentSchool, t.LastSchool,
         t.ExpectedSalaryMin, t.ExpectedSalaryMax,
         t.CurrentCityId, t.CurrentStateId,
+        t.CurrentDistrictId, t.CurrentTehsilId, t.CurrentAreaOrVillage,
         t.AboutMe, t.ResumePath,
         t.IsVerified, t.VerifiedOn, t.IsSuspended,
         t.ProfileCompletionPercent,
@@ -107,7 +108,14 @@ BEGIN
     SELECT l.LanguageId, l.ProficiencyLevel FROM dbo.t_app_teacher_languages l
     WHERE l.TeacherId = @TeacherId AND l.Is_Deleted = 0;
 
-    SELECT p.Id, p.CityId, p.StateId, p.PreferenceOrder
+    /*
+      ⚠️ TehsilId IS RETURNED NOW. It has been on this table since 036 and was
+      never read back, so a screen could not have shown a saved tehsil even if
+      one had ever been written — and none ever was, because the table type that
+      carries the save had no column for it until today. Both halves are fixed
+      together, which is the whole point.
+    */
+    SELECT p.Id, p.CityId, p.StateId, p.PreferenceOrder, p.TehsilId
     FROM dbo.t_app_teacher_preferred_locations p
     WHERE p.TeacherId = @TeacherId AND p.Is_Deleted = 0
     ORDER BY p.PreferenceOrder, p.Id;
@@ -306,6 +314,27 @@ CREATE OR ALTER PROCEDURE dbo.USP_UpdateTeacherProfile
     @ExpectedSalaryMax          decimal(12, 2) = NULL,
     @CurrentCityId              int            = NULL,
     @CurrentStateId             int            = NULL,
+
+    /*
+      Client instruction, 15 Nov 2026: the teacher's address gets the same chain
+      the school has — State, District, City/Town, Tehsil/Sub-tehsil, Area or
+      village. 039_alter_teacher_address_columns.sql added the three columns;
+      these are how they are written.
+
+      ⚠️ DISTRICT IS NOW STORED, NOT DERIVED. The screen used to rebuild it from
+      the saved city on every re-open, which worked only because a city belongs
+      to exactly one district — and stops being defensible under a tehsil, which
+      sits BETWEEN them. A derived parent cannot be checked against a stored
+      child.
+
+      ⚠️ ALL THREE OPTIONAL, like every other field on this procedure. A teacher
+      who filled in their address before today has NULL in them, which is the
+      honest value: nobody asked.
+    */
+    @CurrentDistrictId          int            = NULL,
+    @CurrentTehsilId            int            = NULL,
+    @CurrentAreaOrVillage       nvarchar(200)  = NULL,
+
     @AboutMe                    nvarchar(max)  = NULL
 AS
 BEGIN
@@ -362,6 +391,9 @@ BEGIN
                    ExpectedSalaryMax        = @ExpectedSalaryMax,
                    CurrentCityId            = @CurrentCityId,
                    CurrentStateId           = @CurrentStateId,
+                   CurrentDistrictId        = @CurrentDistrictId,
+                   CurrentTehsilId          = @CurrentTehsilId,
+                   CurrentAreaOrVillage     = @CurrentAreaOrVillage,
                    AboutMe                  = @AboutMe,
                    RowVersion               = RowVersion + 1,
                    ModifiedOn               = @Now

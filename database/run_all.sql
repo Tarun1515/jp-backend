@@ -518,6 +518,18 @@ GO
 -- ⚠️ BEFORE any procedure: 04_procedures\028 reads both.
 :r $(DbRoot)\jp_app\01_tables\038_t_app_branch_pin_review.sql
 
+-- Client instruction, 15 Nov 2026: the teacher's own address gets the same
+-- chain the school has — State -> District -> City -> Tehsil -> Area. 036 gave
+-- that chain to schools, to branches and to teacher PREFERRED locations, and
+-- left the teacher row out; this closes it.
+:r $(DbRoot)\jp_app\01_tables\039_alter_teacher_address_columns.sql
+
+-- ⚠️ MUST run before 04_procedures\008, which recreates both objects this
+-- drops. A TABLE TYPE cannot be ALTERed, and it cannot be dropped while a
+-- procedure references it — so the proc goes first, then the type, and 008
+-- rebuilds them with TehsilId.
+:r $(DbRoot)\jp_app\01_tables\040_alter_preferred_location_tvp.sql
+
 -- ---- seed / backfill --------------------------------------------------------
 -- ⚠️ The Phase 3B backfill is a ONE-TIME migration rather than a seed that
 -- shapes the schema. It is listed here so a database rebuilt from scratch ends

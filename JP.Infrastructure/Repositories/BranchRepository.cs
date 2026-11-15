@@ -97,6 +97,10 @@ internal sealed class BranchRepository : BaseRepository, IBranchRepository
         p.Add("@DistrictId", request.DistrictId, DbType.Int32);
         p.Add("@StateId", request.StateId, DbType.Int32);
         p.Add("@Pincode", request.Pincode, DbType.AnsiString, size: 10);
+
+        // The two columns 036 added and no procedure could reach until 15 Nov 2026.
+        p.Add("@TehsilId", request.TehsilId, DbType.Int32);
+        p.Add("@AreaOrVillage", request.AreaOrVillage, DbType.String, size: 200);
         p.Add("@Latitude", request.Latitude, DbType.Decimal);
         p.Add("@Longitude", request.Longitude, DbType.Decimal);
 

@@ -62,7 +62,29 @@ BEGIN
         -- deduplicates the input before touching anything.
         CityId          int NULL,
         StateId         int NOT NULL,
-        PreferenceOrder int NOT NULL
+        PreferenceOrder int NOT NULL,
+
+        /*
+          🔴 ADDED 15 Nov 2026, AND IT IS THE HOP THAT WAS MISSING.
+
+          t_app_teacher_preferred_locations has carried TehsilId since 036. This
+          type did not, so the picker on the teacher profile accepted a tehsil,
+          the section reported "Saved", and the value was discarded right here.
+          The column existed and nothing could write to it.
+
+          ⚠️ The comment further down this file predicted it in those words —
+          the control "must land in the SAME change as the tehsil-by-city
+          master, or the control starts eating a choice". The master landed on
+          11 November and this did not.
+
+          ⚠️ NULLABLE, AND NOT PART OF THE PLACE'S IDENTITY. A tehsil is extra
+          detail UNDER the chosen town, and a town belongs to exactly one
+          tehsil — so two rows differing only by tehsil would be nonsense, not
+          two preferences. It is therefore matched like an attribute and
+          UPDATED in place, exactly as PreferenceOrder is, and never added to
+          the join key.
+        */
+        TehsilId        int NULL
     );
 END
 GO
@@ -442,10 +464,20 @@ BEGIN
               PreferenceOrder wins, because if somebody listed Pune first and
               again later, first is what they meant.
             */
-            DECLARE @Wanted TABLE (CityId int NULL, StateId int NOT NULL, PreferenceOrder int NOT NULL);
+            DECLARE @Wanted TABLE (CityId int NULL, StateId int NOT NULL,
+                                   PreferenceOrder int NOT NULL, TehsilId int NULL);
 
-            INSERT INTO @Wanted (CityId, StateId, PreferenceOrder)
-            SELECT CityId, StateId, MIN(PreferenceOrder)
+            /*
+              ⚠️ MAX(TehsilId), NOT MIN. SQL's aggregates ignore NULLs, so MAX
+              over a duplicated place prefers a real tehsil to an absent one —
+              which is the right way round when the same town arrives twice and
+              only one copy carries the detail. MIN would do the same for the
+              same reason; MAX is written because "prefer the answer over the
+              blank" is the intent, and a reader should not have to reason about
+              NULL handling to see it.
+            */
+            INSERT INTO @Wanted (CityId, StateId, PreferenceOrder, TehsilId)
+            SELECT CityId, StateId, MIN(PreferenceOrder), MAX(TehsilId)
             FROM @Locations
             GROUP BY CityId, StateId;
 
@@ -463,6 +495,7 @@ BEGIN
             UPDATE p
                SET p.Is_Deleted = 0, p.Is_Active = 1,
                    p.PreferenceOrder = w.PreferenceOrder,
+                   p.TehsilId = w.TehsilId,
                    p.ModifiedOn = @Now
             FROM dbo.t_app_teacher_preferred_locations p
                 INNER JOIN @Wanted w
@@ -471,10 +504,21 @@ BEGIN
             WHERE p.TeacherId = @TeacherId AND p.Is_Deleted = 1;
             SET @restored = @@ROWCOUNT;
 
-            -- 3. REORDERED — the place is the same, its rank changed. An
-            --    UPDATE, for the same reason a language level is.
+            /*
+              3. CHANGED — the place is the same, something about it moved.
+
+              ⚠️ TEHSIL COUNTS AS A CHANGE, with the same NULL-equality the
+              join uses. Comparing `p.TehsilId <> w.TehsilId` alone would be
+              UNKNOWN whenever either side is NULL, so clearing a tehsil — or
+              setting one for the first time, which is the common case on a row
+              saved before today — would not be detected and the save would
+              report success having changed nothing. That is the exact shape of
+              the bug this whole migration exists to fix, and it would have been
+              reintroduced one line below the fix.
+            */
             UPDATE p
                SET p.PreferenceOrder = w.PreferenceOrder,
+                   p.TehsilId = w.TehsilId,
                    p.ModifiedOn = @Now
             FROM dbo.t_app_teacher_preferred_locations p
                 INNER JOIN @Wanted w
@@ -482,13 +526,15 @@ BEGIN
                    AND ((w.CityId IS NULL AND p.CityId IS NULL) OR w.CityId = p.CityId)
             WHERE p.TeacherId = @TeacherId
               AND p.Is_Deleted = 0
-              AND p.PreferenceOrder <> w.PreferenceOrder;
+              AND (p.PreferenceOrder <> w.PreferenceOrder
+                   OR NOT ((p.TehsilId IS NULL AND w.TehsilId IS NULL)
+                           OR p.TehsilId = w.TehsilId));
             SET @updated = @@ROWCOUNT;
 
             -- 4. NEW
             INSERT INTO dbo.t_app_teacher_preferred_locations
-                (TeacherId, CityId, StateId, PreferenceOrder)
-            SELECT @TeacherId, w.CityId, w.StateId, w.PreferenceOrder
+                (TeacherId, CityId, StateId, PreferenceOrder, TehsilId)
+            SELECT @TeacherId, w.CityId, w.StateId, w.PreferenceOrder, w.TehsilId
             FROM @Wanted w
             WHERE NOT EXISTS (
                 SELECT 1 FROM dbo.t_app_teacher_preferred_locations p

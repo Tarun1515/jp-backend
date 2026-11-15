@@ -39,6 +39,17 @@ public sealed record SchoolProfileDto
     public int? StateId { get; init; }
     public string? Pincode { get; init; }
 
+    /*
+      🔴 ADDED 15 Nov 2026. Both columns have existed on t_app_schools and
+      t_app_school_branches since 036, and no procedure in jp_app wrote either
+      one — so the registration form could state a tehsil and nothing afterwards
+      could correct it. The campus and profile screens deliberately had no box,
+      because adding one over a procedure that could not store it would have
+      meant pressing Save, being told "Saved", and losing the value.
+    */
+    public int? TehsilId { get; init; }
+    public string? AreaOrVillage { get; init; }
+
     public bool IsVerified { get; init; }
     public DateTime? VerifiedOn { get; init; }
     public bool IsSuspended { get; init; }
@@ -133,6 +144,17 @@ public sealed record BranchDto
     public int? DistrictId { get; init; }
     public int? StateId { get; init; }
     public string? Pincode { get; init; }
+
+    /*
+      🔴 ADDED 15 Nov 2026. Both columns have existed on t_app_schools and
+      t_app_school_branches since 036, and no procedure in jp_app wrote either
+      one — so the registration form could state a tehsil and nothing afterwards
+      could correct it. The campus and profile screens deliberately had no box,
+      because adding one over a procedure that could not store it would have
+      meant pressing Save, being told "Saved", and losing the value.
+    */
+    public int? TehsilId { get; init; }
+    public string? AreaOrVillage { get; init; }
     public decimal? Latitude { get; init; }
     public decimal? Longitude { get; init; }
     public string? ContactPerson { get; init; }
@@ -191,6 +213,17 @@ public sealed record UpdateSchoolProfileRequest
     public int? DistrictId { get; init; }
     public int? StateId { get; init; }
     public string? Pincode { get; init; }
+
+    /*
+      🔴 ADDED 15 Nov 2026. Both columns have existed on t_app_schools and
+      t_app_school_branches since 036, and no procedure in jp_app wrote either
+      one — so the registration form could state a tehsil and nothing afterwards
+      could correct it. The campus and profile screens deliberately had no box,
+      because adding one over a procedure that could not store it would have
+      meant pressing Save, being told "Saved", and losing the value.
+    */
+    public int? TehsilId { get; init; }
+    public string? AreaOrVillage { get; init; }
 }
 
 /// <summary>
@@ -245,6 +278,17 @@ public sealed record SaveBranchRequest
     public int? DistrictId { get; init; }
     public int? StateId { get; init; }
     public string? Pincode { get; init; }
+
+    /*
+      🔴 ADDED 15 Nov 2026. Both columns have existed on t_app_schools and
+      t_app_school_branches since 036, and no procedure in jp_app wrote either
+      one — so the registration form could state a tehsil and nothing afterwards
+      could correct it. The campus and profile screens deliberately had no box,
+      because adding one over a procedure that could not store it would have
+      meant pressing Save, being told "Saved", and losing the value.
+    */
+    public int? TehsilId { get; init; }
+    public string? AreaOrVillage { get; init; }
     public decimal? Latitude { get; init; }
     public decimal? Longitude { get; init; }
 

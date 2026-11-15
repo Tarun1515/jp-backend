@@ -58,6 +58,7 @@ BEGIN
         s.ContactEmail, s.ContactMobile,
         s.PrincipalName, s.HrContactName, s.HrContactMobile,
         s.AddressLine1, s.AddressLine2, s.CityId, s.DistrictId, s.StateId, s.Pincode,
+        s.TehsilId, s.AreaOrVillage,
         s.IsVerified, s.VerifiedOn,
         s.IsSuspended, s.SuspendedOn, s.SuspensionReason,
         s.RowVersion,
@@ -147,6 +148,7 @@ BEGIN
         s.SchoolUid, s.SchoolName, s.SchoolTypeId, s.BoardId,
         s.LogoPath, s.EstablishedYear, s.AboutSchool, s.Website,
         s.AddressLine1, s.AddressLine2, s.CityId, s.DistrictId, s.StateId, s.Pincode,
+        s.TehsilId, s.AreaOrVillage,
         s.IsVerified
     FROM dbo.t_app_schools s
     WHERE s.SchoolId = @SchoolId;
@@ -212,6 +214,25 @@ CREATE OR ALTER PROCEDURE dbo.USP_UpdateSchoolProfile
     @DistrictId         int            = NULL,
     @StateId            int            = NULL,
     @Pincode            varchar(10)    = NULL,
+
+    /*
+      🔴 ADDED 15 Nov 2026 — THE COLUMNS EXISTED AND THIS PROCEDURE COULD NOT
+      REACH THEM.
+
+      036_alter_address_columns.sql put TehsilId and AreaOrVillage on
+      t_app_schools; the registration path writes them
+      (USP_SubmitApprovalRequest -> USP_ProvisionSchoolFromApproval) and this
+      procedure did not. So a school could state its tehsil when registering and
+      then never correct it: the profile screen had no box, because adding one
+      would have let a school press Save, be told "Saved", and lose it.
+
+      ⚠️ That restraint was right, and it is also why the gap survived — a
+      missing control is invisible, unlike a broken one. The fix is this
+      procedure, not the screen.
+    */
+    @TehsilId           int            = NULL,
+    @AreaOrVillage      nvarchar(200)  = NULL,
+
     @ActionByUserId     bigint         = NULL
 AS
 BEGIN
@@ -509,6 +530,8 @@ BEGIN
                    DistrictId        = @DistrictId,
                    StateId           = @StateId,
                    Pincode           = @Pincode,
+                   TehsilId          = @TehsilId,
+                   AreaOrVillage     = @AreaOrVillage,
                    RowVersion        = RowVersion + 1,
                    ModifiedOn        = @Now,
                    ModifiedBy        = @ActionByUserId

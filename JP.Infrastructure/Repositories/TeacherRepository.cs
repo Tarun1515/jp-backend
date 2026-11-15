@@ -275,6 +275,12 @@ internal sealed class TeacherRepository : BaseRepository, ITeacherRepository
         p.Add("@ExpectedSalaryMax", request.ExpectedSalaryMax, DbType.Decimal);
         p.Add("@CurrentCityId", request.CurrentCityId, DbType.Int32);
         p.Add("@CurrentStateId", request.CurrentStateId, DbType.Int32);
+
+        // The rest of the chain (15 Nov 2026) — district is stored now rather
+        // than rebuilt in the browser from the saved city.
+        p.Add("@CurrentDistrictId", request.CurrentDistrictId, DbType.Int32);
+        p.Add("@CurrentTehsilId", request.CurrentTehsilId, DbType.Int32);
+        p.Add("@CurrentAreaOrVillage", request.CurrentAreaOrVillage, DbType.String, size: 200);
         p.Add("@AboutMe", request.AboutMe, DbType.String, size: -1);
 
         return QuerySingleAsync<ProcResult>("USP_UpdateTeacherProfile", p, cancellationToken);
@@ -411,10 +417,20 @@ internal sealed class TeacherRepository : BaseRepository, ITeacherRepository
     public Task<BridgeSyncWithUpdateResult> SavePreferredLocationsAsync(
         Guid userUid, IReadOnlyList<TeacherLocationDto> locations, CancellationToken cancellationToken)
     {
+        /*
+          🔴 COLUMN ORDER IS THE CONTRACT HERE, NOT COLUMN NAME.
+
+          A table-valued parameter is matched to its type POSITIONALLY. These
+          four must stay in the same order as dbo.PreferredLocationList
+          (CityId, StateId, PreferenceOrder, TehsilId) — reordering them here
+          would not fail to compile and would not throw: it would quietly write
+          a tehsil id into PreferenceOrder.
+        */
         var table = new DataTable();
         table.Columns.Add("CityId", typeof(int));
         table.Columns.Add("StateId", typeof(int));
         table.Columns.Add("PreferenceOrder", typeof(int));
+        table.Columns.Add("TehsilId", typeof(int));
 
         /*
           ⚠️ NOT deduplicated here, deliberately — the procedure does it, because
@@ -424,7 +440,11 @@ internal sealed class TeacherRepository : BaseRepository, ITeacherRepository
         */
         foreach (var l in locations ?? [])
         {
-            table.Rows.Add((object?)l.CityId ?? DBNull.Value, l.StateId, l.PreferenceOrder);
+            table.Rows.Add(
+                (object?)l.CityId ?? DBNull.Value,
+                l.StateId,
+                l.PreferenceOrder,
+                (object?)l.TehsilId ?? DBNull.Value);
         }
 
         var p = new DynamicParameters();
