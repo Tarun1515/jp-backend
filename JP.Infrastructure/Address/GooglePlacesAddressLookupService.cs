@@ -245,8 +245,14 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
     private async Task<ResolvedAddress> ToResolvedAsync(
         JsonElement result, string placeId, CancellationToken cancellationToken)
     {
-        string? stateName = null, districtName = null, tehsilName = null,
-                cityName = null, areaName = null, pincode = null, route = null, number = null;
+        /*
+          🔴 THE THREE ADMIN LEVELS ARE KEPT AS GOOGLE'S LEVELS, NOT AS OUR
+          NAMES FOR THEM. They used to be captured straight into
+          districtName / tehsilName / cityName, and that mapping is wrong for
+          India — see the note above the matching block below.
+        */
+        string? stateName = null, level2 = null, level3 = null, localityName = null,
+                areaName = null, pincode = null, route = null, number = null;
 
         /*
           ⚠️ `addressComponents` / `longText`, not `address_components` /
@@ -267,9 +273,9 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
                 var set = types.EnumerateArray().Select(t => t.GetString()).ToHashSet(StringComparer.Ordinal);
 
                 if (set.Contains("administrative_area_level_1")) stateName ??= name;
-                else if (set.Contains("administrative_area_level_2")) districtName ??= name;
-                else if (set.Contains("administrative_area_level_3")) tehsilName ??= name;
-                else if (set.Contains("locality")) cityName ??= name;
+                else if (set.Contains("administrative_area_level_2")) level2 ??= name;
+                else if (set.Contains("administrative_area_level_3")) level3 ??= name;
+                else if (set.Contains("locality")) localityName ??= name;
                 else if (set.Contains("sublocality") || set.Contains("sublocality_level_1")) areaName ??= name;
                 else if (set.Contains("neighborhood")) areaName ??= name;
                 else if (set.Contains("postal_code")) pincode ??= name;
@@ -283,15 +289,66 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
         var stateId = await MatchAsync("STATE", null, stateName, cancellationToken).ConfigureAwait(false);
         if (stateName is not null && stateId is null) unmatched.Add($"state '{stateName}'");
 
+        /*
+          ======================================================================
+          🔴 INDIA PUTS A REVENUE *DIVISION* AT administrative_area_level_2,
+             AND THAT IS WHY THIS USED TO MATCH NOTHING AT ALL
+          ======================================================================
+          Measured live on 15 Nov 2026, with the client's key, four addresses in
+          two states. Every one came back with district, tehsil AND city null:
+
+              Sector 14, Gurugram    -> level_2 'Gurgaon Division'  level_3 'Gurugram'
+              Model Town, Rohtak     -> level_2 'Rohtak Division'   level_3 'Rohtak'
+              Model Town, Tohana     -> level_2 'Hisar Division'    level_3 'Fatehabad'
+              Civil Lines, Ludhiana  -> level_2 'Patiala Division'  level_3 'Ludhiana'
+
+          A Division is a GROUPING OF DISTRICTS. `m_mdm_district` holds
+          districts, so level_2 can never match one — and because the city
+          lookup takes its parent from the district, ONE miss at the top took
+          all three levels down with it. The autofill delivered state, pincode
+          and coordinates and silently dropped the three levels the client
+          actually asked for.
+
+          ⚠️ So each level now gets CANDIDATES, tried in the order India
+          actually uses, against the same exact-ish matcher as before. Nothing
+          here is fuzzy: every candidate is a verbatim name Google sent, and
+          every lookup stays scoped to its parent.
+
+          ⚠️ AND THE SAME NAME AT THREE LEVELS IS CORRECT, NOT A BUG TO GUARD
+          AGAINST: Rohtak is a district, a tehsil inside it, and that tehsil's
+          headquarters town. So a candidate used for the district is NOT
+          excluded from the tehsil or the city.
+
+          🔴🔴 THE FIRST VERSION OF THIS FIX PUT A SCHOOL IN THE WRONG DISTRICT,
+          AND THE STORY IS KEPT BECAUSE IT IS THE WHOLE POINT OF THIS BLOCK.
+          It began the candidate list with the division name minus the word
+          "Division" — `StripDivision("Hisar Division") -> "Hisar"`. Measured:
+
+              Tohana   -> matched district 'Hisar'   (CORRECT: Fatehabad, 812)
+              Ludhiana -> matched district 'Patiala' (CORRECT: Ludhiana,  2012)
+
+          Both are REAL districts, so nothing was reported as unmatched and
+          `unmatched` came back EMPTY on one of them. A division's name is its
+          headquarters district's name, so stripping the word turns a grouping
+          into a confident wrong answer — precisely the silent mis-filing the
+          exact-ish rule below exists to prevent. The stripping is gone.
+
+          ⚠️ level_2 IS STILL TRIED, BUT VERBATIM. In states with no divisions
+          Google puts the district at level_2, and an exact match on a real
+          district name is right. "Hisar Division" simply matches nothing, which
+          is the correct outcome for a name that is not a district.
+        */
+        var districtTried = new[] { level3, level2, localityName };
         var districtId = stateId is null
             ? null
-            : await MatchAsync("DISTRICT", stateId, districtName, cancellationToken).ConfigureAwait(false);
-        if (districtName is not null && districtId is null) unmatched.Add($"district '{districtName}'");
+            : await MatchFirstAsync("DISTRICT", stateId, districtTried, cancellationToken).ConfigureAwait(false);
+        if (districtId is null && Named(districtTried) is { } dTried) unmatched.Add($"district {dTried}");
 
+        var tehsilTried = new[] { level3, localityName };
         var tehsilId = districtId is null
             ? null
-            : await MatchAsync("TEHSIL", districtId, tehsilName, cancellationToken).ConfigureAwait(false);
-        if (tehsilName is not null && tehsilId is null) unmatched.Add($"tehsil '{tehsilName}'");
+            : await MatchFirstAsync("TEHSIL", districtId, tehsilTried, cancellationToken).ConfigureAwait(false);
+        if (tehsilId is null && Named(tehsilTried) is { } tTried) unmatched.Add($"tehsil {tTried}");
 
         /*
           City is looked up under the tehsil when we have one, under the
@@ -300,10 +357,19 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
         */
         var cityParent = tehsilId ?? districtId;
 
+        var cityTried = new[] { localityName, level3 };
         var cityId = cityParent is null
             ? null
-            : await MatchAsync("CITY", cityParent, cityName, cancellationToken).ConfigureAwait(false);
-        if (cityName is not null && cityId is null) unmatched.Add($"city '{cityName}'");
+            : await MatchFirstAsync("CITY", cityParent, cityTried, cancellationToken).ConfigureAwait(false);
+        if (cityId is null && Named(cityTried) is { } cTried) unmatched.Add($"city {cTried}");
+
+        /*
+          The names the area fallback below still reasons about. `districtName`
+          is only used for reporting now — the matching above works off the
+          candidate lists, not off a single guess.
+        */
+        var cityName = localityName;
+        var tehsilName = level3;
 
         decimal? lat = null, lng = null;
 
@@ -340,7 +406,14 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
             Latitude = Round(lat),
             Longitude = Round(lng),
             GooglePlaceId = placeId,
-            FormattedAddress = Trim(Text(result, "formatted_address"), 500),
+            /*
+              🔴 `formattedAddress`, NOT `formatted_address`. This one line kept
+              the legacy snake_case spelling through the Places (New) port, so
+              it read a key that is never present and FormattedAddress came back
+              null on every single resolve — measured live, 15 Nov 2026. The
+              field is in DetailsFieldMask, so Google was sending it all along.
+            */
+            FormattedAddress = Trim(Text(result, "formattedAddress"), 500),
             Unmatched = unmatched,
         };
     }
@@ -356,6 +429,56 @@ internal sealed class GooglePlacesAddressLookupService : IAddressLookupService
     /// Aliases, if they are ever wanted, belong in the master as rows — not in
     /// a similarity threshold here.
     /// </remarks>
+    /// <summary>
+    /// The first candidate that matches this master level, or null.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ ORDER IS THE WHOLE CONTRACT: candidates arrive most-specific-first,
+    /// and the first exact match wins. It is still <see cref="MatchAsync"/>
+    /// doing the matching, still scoped to <paramref name="parentId"/>, so this
+    /// adds attempts — never looseness.
+    /// </remarks>
+    private async Task<int?> MatchFirstAsync(
+        string masterCode, int? parentId, IReadOnlyList<string?> candidates,
+        CancellationToken cancellationToken)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var candidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate) || !seen.Add(candidate))
+            {
+                continue;
+            }
+
+            var id = await MatchAsync(masterCode, parentId, candidate, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (id is not null)
+            {
+                return id;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The candidates actually tried, quoted, for <c>Unmatched</c> — or null
+    /// when Google sent nothing for this level and there is nothing to report.
+    /// </summary>
+    private static string? Named(IReadOnlyList<string?> candidates)
+    {
+        var names = candidates
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(c => $"'{c}'")
+            .ToList();
+
+        return names.Count == 0 ? null : string.Join(" / ", names);
+    }
+
     private async Task<int?> MatchAsync(
         string masterCode, int? parentId, string? name, CancellationToken cancellationToken)
     {
