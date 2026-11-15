@@ -145,10 +145,24 @@ UPDATE dbo.t_app_school_users SET Is_Active = 1 WHERE SchoolUserId = @suHrA;
   The resolver being right is not enough — what matters is that the procedures
   actually use it.
 ==============================================================================*/
+/*
+  ⚠️ THIS SHAPE IS THE CONTRACT, AND `INSERT ... EXEC` ENFORCES IT POSITIONALLY.
+
+  🔴 It broke on 15 Nov 2026 with Msg 213 when USP_GetBranchList gained
+  TehsilId and AreaOrVillage: the column count stopped matching and the whole
+  test file aborted — which the shared runner reported as `nosummary`, not as a
+  failed assertion, because the batch died before printing its own total.
+
+  That is the right behaviour from both sides. A read procedure growing a column
+  is a contract change, and this is the file that is supposed to notice. The fix
+  is to track the contract here, in the SAME order the procedure projects — not
+  to give the procedure a narrower projection so an old test keeps passing.
+*/
 DECLARE @list TABLE (BranchId bigint, BranchUid uniqueidentifier, SchoolId bigint,
                      BranchName nvarchar(200), BranchCode varchar(30), IsHeadOffice tinyint,
                      AddressLine1 nvarchar(250), AddressLine2 nvarchar(250),
                      CityId int, DistrictId int, StateId int, Pincode varchar(10),
+                     TehsilId int, AreaOrVillage nvarchar(200),
                      Latitude decimal(9,6), Longitude decimal(9,6),
                      ContactPerson nvarchar(150), ContactEmail nvarchar(150), ContactMobile varchar(15),
                      Is_Active tinyint, RowVersion int, CreatedOn datetime2);
